@@ -1,0 +1,114 @@
+
+clear
+units           metal
+dimension       3
+atom_style      atomic
+boundary        p p p
+
+variable        T equal 1108.5
+
+variable        a0 equal 3.152
+variable        T0 equal 300.0
+
+variable        nx equal 21
+variable        ny equal 21
+variable        nz equal 21
+
+
+# Run settings
+variable        dt equal 0.001          # ps = 1 fs in metal units
+variable        tdamp equal 0.1         # ps
+variable        pdamp equal 1.0         # ps
+variable        thermo_every equal 1000
+
+# Relaxation lengths
+variable        npt_equil equal 50000
+variable        npt_avg equal 4000
+
+# -----------------------------
+# Build periodic bcc W
+# -----------------------------
+
+lattice         bcc ${a0}
+region          box block 0 ${nx} 0 ${ny} 0 ${nz} units lattice
+create_box      1 box
+create_atoms    1 box
+
+mass            1 183.85
+
+pair_style      eam/fs
+pair_coeff      * * w_eam4.fs W
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+timestep        ${dt}
+
+thermo          ${thermo_every}
+thermo_style    custom step temp press pxx pyy pzz pe etotal lx ly lz vol
+
+min_style       cg
+minimize        1.0e-14 1.0e-14 10000 10000
+
+velocity        all create ${T} 12345 mom yes rot yes dist gaussian
+
+fix             1 all npt temp ${T} ${T} ${tdamp} iso 0.0 0.0 ${pdamp}
+
+run             ${npt_equil}
+
+variable        lxv equal lx
+variable        lyv equal ly
+variable        lzv equal lz
+variable        vv  equal vol
+variable        Tv  equal temp
+variable        Pv  equal press
+
+fix             2 all ave/time 20 200 ${npt_avg} v_Tv v_Pv v_lxv v_lyv v_lzv v_vv file avg_W_${T}K.dat ave one
+
+run             ${npt_avg}
+
+variable        a_from_lx equal lx/${nx}
+variable        a_from_ly equal ly/${ny}
+variable        a_from_lz equal lz/${nz}
+variable        aavg equal (v_a_from_lx+v_a_from_ly+v_a_from_lz)/3.0
+
+variable        Vcell equal vol/(${nx}*${ny}*${nz})
+variable        V0 equal ${a0}*${a0}*${a0}
+
+# Linear and volumetric thermal expansion estimates relative to T0
+if "${T} > ${T0}" then &
+"variable alphaa equal (v_aavg-${a0})/(${a0}*(${T}-${T0}))" &
+else &
+"variable alphaa equal 0.0"
+
+if "${T} > ${T0}" then &
+"variable alphaV equal (v_Vcell-v_V0)/(v_V0*(${T}-${T0}))" &
+else &
+"variable alphaV equal 0.0"
+
+print "================================================"
+print "Bulk W relaxation complete"
+print "T = ${T} K"
+print "a_x(T) = ${a_from_lx} A"
+print "a_y(T) = ${a_from_ly} A"
+print "a_z(T) = ${a_from_lz} A"
+print "a_avg(T) = ${aavg} A"
+print "Vcell(T) = ${Vcell} A^3"
+print "alpha_a = ${alphaa} 1/K"
+print "alpha_V = ${alphaV} 1/K"
+print "================================================"
+
+# Append one-line summary:
+# T  aavg  Vcell  alpha_a  alpha_V
+print "${T} ${aavg} ${Vcell} ${alphaa} ${alphaV}" append thermal_expansion_W_summary.dat
+
+write_restart   W_bulk_relaxed_${T}K.restart
+write_data      W_bulk_relaxed_${T}K.data
+
+dump            d1 all custom 1 W_bulk_relaxed_${T}K.lammpstrj id type x y z
+dump_modify     d1 sort id
+run             0
+undump          d1
+
+unfix           1
+unfix           2
