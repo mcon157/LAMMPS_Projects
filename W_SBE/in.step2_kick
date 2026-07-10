@@ -1,0 +1,163 @@
+
+clear
+units           metal
+dimension       3
+atom_style      atomic
+boundary        p p f
+
+variable        a equal 3.165
+variable        nx equal 21
+variable        ny equal 21
+variable        nz equal 21
+
+variable        potfile string w_eam4.fs
+
+variable        Epush equal 10.55
+
+variable        massW equal 183.84
+
+
+# KE(eV) = 0.5 * mass(g/mol) * v^2(A/ps)^2 / 9648.533
+variable        vzpush equal sqrt(2.0*${Epush}*9648.533/${massW})
+
+variable        vacuum equal 250.0
+variable        fixed_thick equal 6.0
+variable        surf_thick equal 3.5
+
+variable        dt equal 0.001
+variable        run_steps equal 8000
+variable        thermo_every equal 100
+
+# Escape criterion:
+# atom should be much farther than potential cutoff above original surface.
+# w_eam4 cutoff is around 5.5 A, so +20 A is conservative.
+variable        escape_height equal 20.0
+
+# -----------------------------
+# Build W(001) slab
+# -----------------------------
+
+lattice         bcc ${a} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+region          slab block 0 ${nx} 0 ${ny} 0 ${nz} units lattice
+create_box      1 slab
+create_atoms    1 box
+
+mass            1 183.84
+
+pair_style      eam/fs
+pair_coeff      * * ${potfile} W
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+timestep        ${dt}
+
+# Store slab bounds and add vacuum
+variable        zlo0 equal zlo
+variable        zhi0 equal zhi
+variable        zlo_slab equal ${zlo0}
+variable        zhi_slab equal ${zhi0}
+variable        zhi_vac equal ${zhi_slab}+${vacuum}
+
+change_box      all z final ${zlo_slab} ${zhi_vac} units box
+
+# -----------------------------
+# Define fixed bottom and surface
+# -----------------------------
+
+variable        z_fixed_hi equal ${zlo_slab}+${fixed_thick}
+region          r_fixed block INF INF INF INF ${zlo_slab} ${z_fixed_hi} units box
+group           g_fixed region r_fixed
+
+variable        z_surf_lo equal ${zhi_slab}-${surf_thick}
+variable        z_surf_hi equal ${zhi_slab}+1.0
+region          r_surface block INF INF INF INF ${z_surf_lo} ${z_surf_hi} units box
+group           g_surface region r_surface
+
+group           g_mobile subtract all g_fixed
+
+# -----------------------------
+# Select center surface atom
+# -----------------------------
+# For a 21x21x21 bcc slab this should usually select one atom.
+# If nkick != 1, adjust select_radius slightly.
+# -----------------------------
+
+variable        xmid equal 0.5*(xlo+xhi)
+variable        ymid equal 0.5*(ylo+yhi)
+variable        select_radius equal 2.0
+
+region          r_kick cylinder z ${xmid} ${ymid} ${select_radius} ${z_surf_lo} ${z_surf_hi} units box
+
+group           g_kick_region region r_kick
+group           g_kick intersect g_surface g_kick_region
+
+variable        nkick equal count(g_kick)
+print           "Number of selected kick atoms = ${nkick}"
+
+if "${nkick} != 1" then "quit 1"
+
+group           g_background subtract g_mobile g_kick
+
+# -----------------------------
+# 0 K minimization
+# -----------------------------
+
+velocity        all set 0.0 0.0 0.0
+fix             freeze g_fixed setforce 0.0 0.0 0.0
+
+min_style       cg
+minimize        1.0e-14 1.0e-14 10000 10000
+
+# Zero velocities after minimization
+velocity        all set 0.0 0.0 0.0
+velocity        g_fixed set 0.0 0.0 0.0
+
+# -----------------------------
+# Apply kick to selected atom
+# -----------------------------
+
+velocity        g_kick set 0.0 0.0 ${vzpush} units box
+
+# -----------------------------
+# Tracking computes
+# -----------------------------
+
+compute         ke_kick g_kick ke
+compute         z_kick g_kick reduce ave z
+compute         vz_kick g_kick reduce ave vz
+
+variable        KE_kick equal c_ke_kick
+variable        Z_kick equal c_z_kick
+variable        VZ_kick equal c_vz_kick
+variable        z_escape equal ${zhi_slab}+${escape_height}
+
+thermo          ${thermo_every}
+thermo_style    custom step pe etotal v_KE_kick v_Z_kick v_VZ_kick
+
+# -----------------------------
+# Dynamics
+# -----------------------------
+
+fix             int_mobile g_mobile nve
+
+# dump            d1 all custom 100 dump_kick_0K_E${Epush}.lammpstrj id type x y z vx vy vz
+# dump_modify     d1 sort id
+
+run             ${run_steps}
+
+run             0
+
+print "================================================"
+print "0 K Yang-style kickout trial"
+print "Epush = ${Epush} eV"
+print "Initial vz = ${vzpush} A/ps"
+print "Final kicked atom z = ${Z_kick} A"
+print "Final kicked atom KE = ${KE_kick} eV"
+print "Escape threshold z_escape = ${z_escape} A"
+print "Criteria: escaped if Z_kick > z_escape and KE_kick is near 0 eV"
+print "================================================"
+
+print "${Epush} ${Z_kick} ${KE_kick} ${z_escape}" append kickout_0K_trials.dat
+
+write_data      W001_kickout_0K_E${Epush}.data
