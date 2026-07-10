@@ -1,0 +1,371 @@
+# =====================================================================
+# Tungsten carbide (WC) slab: surface binding energy + surface kickout
+# ---------------------------------------------------------------------
+# Single combined script built from the two pure-W methods:
+#   Method A (W_in_T.step2a): finite-T surface binding energy by
+#                             time-averaging PE/atom of the top layer.
+#   Method B (W_in_T.step2b): controlled upward "kick" of one surface
+#                             atom to probe the sputtering / kickout
+#                             threshold.
+# Structure + potential setup adapted from WC_in.step1.
+#
+# Phases:
+#   Phase 0  build WC slab, add vacuum, minimize
+#   Phase 1  Method A: equilibrate (surface on NVE) + average surface PE
+#   Phase 2  Method B: re-equilibrate, detect top, kick one atom, track
+#
+# Required files (same as WC_in.step1): WCH.tersoff, WHe.table,
+#   CHe.table, HeHe.table.
+#
+# NOTE on kickID (Phase 2): as in W_in_T.step2b you must pick a real
+# top-surface atom ID. The default kickID = 0 selects no atom, so the
+# first run just writes the candidate list
+#   top_atoms_before_kick_T${T}.dump
+# and skips the kick. Inspect that file (the "type" column tells W vs C),
+# set kickID and mass_kick below, and re-run to perform the kick.
+#
+# Run with:  lmp -in WC_in.step2     (the jump/label logic needs -in)
+# =====================================================================
+
+clear
+units           metal
+dimension       3
+atom_style      atomic
+boundary        p p p          # z is switched to fixed (f) after vacuum is added
+
+# ---------------------------------------------------------------------
+# User parameters
+# ---------------------------------------------------------------------
+
+variable        T equal 921.9             # target temperature (K)
+
+# --- WC lattice (values at T, from WC_in.step1) ---
+variable        nx equal 30
+variable        ny equal 18
+variable        a equal 2.92329            # lattice parameter a (Ang) at T
+variable        c equal 2.81805            # lattice parameter c (Ang) at T
+variable        clat equal $c/$a
+variable        alat equal 1.0
+variable        blat equal sqrt(3.0)
+variable        p23 equal 2.0/3.0
+variable        p16 equal 1.0/6.0
+
+# --- masses (g/mol) ---
+variable        massW equal 183.85
+variable        massC equal 12.011
+variable        massHe equal 4.0026
+
+# --- slab geometry (Angstrom) ---
+variable        vacuum equal 250.0         # vacuum above top surface (room for the kicked atom)
+variable        lower_pad equal 20.0       # padding below the slab
+variable        fixed_thick equal 6.0      # frozen bottom layer thickness
+variable        surf_thick equal 3.5       # top layer thickness for surface PE averaging
+                                           # (>= one W + one C sublayer so both species are sampled)
+
+# --- MD settings ---
+variable        dt equal 0.001             # ps (1 fs)
+variable        tdamp equal 0.1            # ps
+variable        thermo_every equal 500
+
+# --- Method A run lengths (steps) ---
+variable        slab_eq_steps equal 20000
+variable        slab_avg_steps equal 20000
+
+# --- Method A output averaging ---
+variable        ave_nevery equal 100
+variable        ave_nrepeat equal 100
+variable        ave_nfreq equal 10000
+
+# --- Method B (kickout) settings ---
+variable        do_kickout equal 1         # 1 = run kickout phase, 0 = stop after Method A
+variable        Epush equal 11.9           # trial kick energy (eV)
+variable        kickID equal 0             # <-- set to a real top-surface atom ID (0 = none; see NOTE)
+variable        mass_kick equal ${massW}   # mass of the kicked atom's species:
+                                           #   ${massW} for a W atom, ${massC} for a C atom
+variable        kick_eq_steps equal 5000   # short re-equilibration before the kick
+                                           # (slab is already thermalized by Method A)
+variable        run_kick_steps equal 8000
+variable        top_tol equal 0.35         # half-thickness of the top candidate layer (Ang)
+variable        escape_height equal 20.0   # height above the surface counted as "escaped" (Ang)
+
+# metal-units kick velocity (A/ps):  KE(eV) = 0.5 * m(g/mol) * v^2 / 9648.533
+variable        vzpush equal sqrt(2.0*${Epush}*9648.533/${mass_kick})
+
+# ---------------------------------------------------------------------
+# Phase 0: build the WC slab (adapted from WC_in.step1)
+# ---------------------------------------------------------------------
+
+lattice         custom ${a} a1 ${alat} 0 0 a2 0 ${blat} 0 a3 0 0 ${clat} &
+                basis 0.0 0.0 0.0 basis 0.5 0.5 0.0 &
+                basis 0.0 ${p23} 0.5 basis 0.5 ${p16} 0.5
+
+region          box  block 0 ${nx} 0 ${ny} -3 40
+region          mbox block 0 ${nx} 0 ${ny} 0 29.8
+create_box      3 box
+create_atoms    2 region mbox basis 1 1 basis 2 1 basis 3 2 basis 4 2
+
+mass            1 ${massW}
+mass            2 ${massC}
+mass            3 ${massHe}
+
+# Species groups (He stays empty here; kept for compatibility with the
+# He-bearing potential carried over from WC_in.step1).
+group           W  type 1
+group           C  type 2
+group           He type 3
+
+variable        nw equal count(W)
+variable        nc equal count(C)
+print           "Created atoms: W = ${nw}, C = ${nc}"
+
+# WCH Tersoff/ZBL for W-C plus tabulated He interactions (from WC_in.step1)
+pair_style      hybrid/overlay tersoff/zbl table linear 10000 zbl 0.8 1.4
+pair_coeff      * * tersoff/zbl WCH.tersoff W C NULL
+pair_coeff      1 3 table WHe.table WHe
+pair_coeff      2 3 table CHe.table CHe
+pair_coeff      3 3 table HeHe.table HeHe
+pair_coeff      2 3 zbl 6 2
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+timestep        ${dt}
+
+# --- measure the actual atom z-extent, then add lower pad + vacuum ---
+compute         zmin0 all reduce min z
+compute         zmax0 all reduce max z
+variable        zlo_now equal c_zmin0
+variable        zhi_now equal c_zmax0
+thermo          1
+thermo_style    custom step c_zmin0 c_zmax0
+run             0
+
+# freeze the slab z-extent as constants
+variable        zlo_slab equal ${zlo_now}
+variable        zhi_slab equal ${zhi_now}
+
+variable        zlo_box equal ${zlo_slab}-${lower_pad}
+variable        zhi_box equal ${zhi_slab}+${vacuum}
+
+change_box      all boundary p p f z final ${zlo_box} ${zhi_box} units box
+
+print           "Slab atom zlo = ${zlo_slab}"
+print           "Slab atom zhi = ${zhi_slab}"
+print           "New box zlo (with lower pad) = ${zlo_box}"
+print           "New box zhi (with vacuum)    = ${zhi_box}"
+
+# ---------------------------------------------------------------------
+# Groups: fixed bottom, mobile, top surface, thermostat region
+# ---------------------------------------------------------------------
+
+variable        z_fixed_hi equal ${zlo_slab}+${fixed_thick}
+region          r_fixed block INF INF INF INF ${zlo_slab} ${z_fixed_hi} units box
+group           g_fixed region r_fixed
+group           g_mobile subtract all g_fixed
+
+# Top surface layer used for surface PE averaging (Method A).
+variable        z_surf_lo equal ${zhi_slab}-${surf_thick}
+variable        z_surf_hi equal ${zhi_slab}+1.0
+region          r_surface block INF INF INF INF ${z_surf_lo} ${z_surf_hi} units box
+group           g_surface region r_surface
+
+# Per-species surface subgroups (surf_thick spans both a W and a C layer).
+group           surf_W intersect g_surface W
+group           surf_C intersect g_surface C
+
+# Thermostat region = mobile atoms minus the surface (surface runs on NVE).
+group           g_thermo subtract g_mobile g_surface
+
+variable        n_all equal count(all)
+variable        n_fixed equal count(g_fixed)
+variable        n_mobile equal count(g_mobile)
+variable        n_surface equal count(g_surface)
+variable        n_surfW equal count(surf_W)
+variable        n_surfC equal count(surf_C)
+variable        n_thermo equal count(g_thermo)
+
+print           "Total atoms         = ${n_all}"
+print           "Fixed atoms         = ${n_fixed}"
+print           "Mobile atoms        = ${n_mobile}"
+print           "Surface atoms       = ${n_surface}  (W = ${n_surfW}, C = ${n_surfC})"
+print           "Thermostatted atoms = ${n_thermo}"
+
+# ---------------------------------------------------------------------
+# Surface-energy computes (Method A)
+# ---------------------------------------------------------------------
+compute         pe_atom all pe/atom
+compute         pe_surface g_surface reduce ave c_pe_atom
+compute         pe_surfW surf_W reduce ave c_pe_atom
+compute         pe_surfC surf_C reduce ave c_pe_atom
+compute         pe_mobile g_mobile reduce ave c_pe_atom
+compute         Tmobile g_mobile temp
+
+variable        PE_surface equal c_pe_surface
+variable        PE_surfW equal c_pe_surfW
+variable        PE_surfC equal c_pe_surfC
+variable        PE_mobile equal c_pe_mobile
+variable        SBE_surface equal -c_pe_surface
+variable        SBE_W equal -c_pe_surfW
+variable        SBE_C equal -c_pe_surfC
+
+thermo          ${thermo_every}
+thermo_style    custom step temp pe etotal lx ly lz v_PE_surface v_SBE_W v_SBE_C
+thermo_modify   temp Tmobile
+
+# ---------------------------------------------------------------------
+# Minimize (bottom frozen)
+# ---------------------------------------------------------------------
+velocity        g_fixed set 0.0 0.0 0.0
+fix             freeze g_fixed setforce 0.0 0.0 0.0
+
+min_style       cg
+minimize        1.0e-12 1.0e-12 10000 10000
+
+write_data      WC_slab_initial_${T}K.data
+
+# ---------------------------------------------------------------------
+# Phase 1 - Method A: finite-T surface binding energy
+#   Interior (g_thermo) thermostatted; surface evolves on NVE so its
+#   energetics are not biased by the thermostat.
+# ---------------------------------------------------------------------
+velocity        g_mobile create ${T} 54321 mom yes rot yes dist gaussian
+velocity        g_fixed set 0.0 0.0 0.0
+
+fix             nvt_eq g_thermo nvt temp ${T} ${T} ${tdamp}
+fix             nve_surf_eq g_surface nve
+run             ${slab_eq_steps}
+unfix           nvt_eq
+unfix           nve_surf_eq
+
+fix             nvt_prod g_thermo nvt temp ${T} ${T} ${tdamp}
+fix             nve_surf_prod g_surface nve
+
+variable        Temp_mobile equal c_Tmobile
+fix             avg_sbe all ave/time ${ave_nevery} ${ave_nrepeat} ${ave_nfreq} &
+                v_SBE_surface v_SBE_W v_SBE_C v_PE_surface v_PE_mobile v_Temp_mobile &
+                file sbe_WC_${T}K.dat ave running
+
+dump            d1 all custom 1000 dump_WC_slab_${T}K.lammpstrj id type x y z c_pe_atom
+dump_modify     d1 sort id
+
+run             ${slab_avg_steps}
+
+write_data      WC_slab_final_${T}K.data
+
+unfix           avg_sbe
+unfix           nvt_prod
+unfix           nve_surf_prod
+undump          d1
+
+print           "================================================"
+print           "Method A complete: surface binding energy averages in sbe_WC_${T}K.dat"
+print           "  columns: SBE_surface SBE_W SBE_C PE_surface PE_mobile T_mobile"
+print           "================================================"
+
+# ---------------------------------------------------------------------
+# Phase 2 - Method B: surface kickout
+# ---------------------------------------------------------------------
+if "${do_kickout} == 0" then "jump SELF end_all"
+
+# Short re-equilibration of the whole mobile group (slab already thermal).
+fix             nvt_re g_mobile nvt temp ${T} ${T} ${tdamp}
+thermo          ${thermo_every}
+thermo_style    custom step temp pe etotal lx ly lz
+thermo_modify   temp Tmobile
+run             ${kick_eq_steps}
+unfix           nvt_re
+
+# Detect the true top surface now.
+thermo          1
+thermo_style    custom step c_zmax0
+run             0
+variable        ztop_now equal c_zmax0
+variable        ztop_const equal ${ztop_now}
+variable        ztop_lo equal ${ztop_const}-${top_tol}
+variable        ztop_hi equal ${ztop_const}+${top_tol}
+variable        z_escape equal ${ztop_const}+${escape_height}
+
+print           "Detected topmost z = ${ztop_const}"
+print           "Top candidate band = ${ztop_lo} to ${ztop_hi}"
+print           "Escape z           = ${z_escape}"
+
+region          r_top_only block INF INF INF INF ${ztop_lo} ${ztop_hi} units box
+group           g_top_only region r_top_only
+variable        ntop equal count(g_top_only)
+print           "Atoms in top candidate layer = ${ntop}"
+
+# Dump candidate top atoms so a kickID can be chosen (type => W vs C).
+dump            d_top g_top_only custom 1 top_atoms_before_kick_T${T}.dump id type x y z vx vy vz
+dump_modify     d_top sort id
+run             0
+undump          d_top
+
+print           "Candidate top atoms written to top_atoms_before_kick_T${T}.dump"
+print           "Using kickID = ${kickID}  (mass_kick = ${mass_kick} g/mol)"
+
+# Select the kicked atom by ID; skip the kick if it is not exactly one atom.
+group           g_kick id ${kickID}
+variable        nkick equal count(g_kick)
+print           "Selected kick atoms = ${nkick} (need exactly 1)"
+print           "If not 1: inspect top_atoms_before_kick_T${T}.dump, set kickID + mass_kick, and re-run."
+if "${nkick} != 1" then "jump SELF end_all"
+
+group           g_background subtract g_mobile g_kick
+variable        n_bg equal count(g_background)
+print           "Background mobile atoms = ${n_bg}"
+
+# Tracking computes for the kicked atom.
+compute         ke_kick g_kick ke
+compute         z_kickc g_kick reduce ave z
+compute         vz_kickc g_kick reduce ave vz
+variable        KE_kick equal c_ke_kick
+variable        Z_kick equal c_z_kickc
+variable        VZ_kick equal c_vz_kickc
+
+# Apply the controlled upward kick (replaces the atom's velocity).
+velocity        g_kick set 0.0 0.0 ${vzpush} units box
+thermo          1
+thermo_style    custom step v_KE_kick v_Z_kick v_VZ_kick
+run             0
+
+print           "================================================"
+print           "Initial kick information"
+print           "T = ${T} K, Epush = ${Epush} eV, kickID = ${kickID}"
+print           "vzpush = ${vzpush} A/ps"
+print           "Initial KE_kick = ${KE_kick} eV"
+print           "Initial z_kick  = ${Z_kick} A"
+print           "Escape z        = ${z_escape} A"
+print           "================================================"
+
+# Kickout dynamics: background thermostatted, kicked atom on NVE.
+fix             nvt_bg g_background nvt temp ${T} ${T} ${tdamp}
+fix             nve_kick g_kick nve
+thermo          ${thermo_every}
+thermo_style    custom step temp pe etotal v_KE_kick v_Z_kick v_VZ_kick
+thermo_modify   temp Tmobile
+
+#dump            d2 all custom 100 dump_WC_T${T}_kick_E${Epush}_ID${kickID}.lammpstrj id type x y z vx vy vz
+#dump_modify     d2 sort id
+run             ${run_kick_steps}
+run             0
+
+print           "================================================"
+print           "Final kickout result"
+print           "T = ${T} K, Epush = ${Epush} eV, kickID = ${kickID}"
+print           "Final z_kick  = ${Z_kick} A"
+print           "Final KE_kick = ${KE_kick} eV"
+print           "Escape z      = ${z_escape} A"
+print           "  Escaped if Z_kick > z_escape"
+print           "  Near-threshold if escaped with KE_kick near 0 eV"
+print           "================================================"
+
+print           "${T} ${Epush} ${kickID} ${Z_kick} ${KE_kick} ${z_escape}" append kickout_WC_T${T}_trials.dat
+
+write_data      WC_T${T}_kick_E${Epush}_ID${kickID}_final.data
+write_restart   WC_T${T}_kick_E${Epush}_ID${kickID}_final.restart
+
+#undump          d2
+unfix           nvt_bg
+unfix           nve_kick
+
+label           end_all
+print           "Done."
