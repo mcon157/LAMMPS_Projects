@@ -1,0 +1,81 @@
+
+clear
+units           metal
+atom_style      atomic
+boundary        p p p
+
+variable        T equal 1000
+
+variable        a0 equal 2.92329
+variable        c0 equal 2.81805
+variable        T0 equal 300.0
+
+variable        alat equal 1.0
+variable        blat equal sqrt(3.0)
+variable        p23 equal 2.0/3.0
+variable        p16 equal 1.0/6.0
+variable        clat equal ${c0}/${a0}
+
+variable        nx equal 12
+variable        ny equal 12
+variable        nz equal 12
+
+lattice custom  ${a0} a1 ${alat} 0.0 0.0 a2 0.0 ${blat} 0.0 a3 0.0 0.0 ${clat} basis 0.0 0.0 0.0 basis 0.5 0.5 0.0 basis 0.0 ${p23} 0.5 basis 0.5 ${p16} 0.5
+
+region          box block 0 ${nx} 0 ${ny} 0 ${nz}
+create_box      2 box
+create_atoms    1 box basis 1 1 basis 2 1 basis 3 2 basis 4 2
+
+mass            1 183.85
+mass            2 12.011
+
+pair_style      tersoff/zbl
+pair_coeff      * * WCH.tersoff W C
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+timestep        0.001
+thermo          1000
+thermo_style    custom step temp press pxx pyy pzz lx ly lz vol
+
+min_style       cg
+minimize        1.0e-14 1.0e-14 10000 10000
+
+velocity        all create ${T} 12345 mom yes rot yes dist gaussian
+
+# x and y coupled for hexagonal basal plane, z independent
+fix             1 all npt temp ${T} ${T} 0.1 x 0.0 0.0 1.0 y 0.0 0.0 1.0 z 0.0 0.0 1.0 couple xy
+
+run             50000
+
+variable        lxv equal lx
+variable        lyv equal ly
+variable        lzv equal lz
+variable        vv  equal vol
+variable        Tv  equal temp
+
+fix             2 all ave/time 20 200 4000 v_Tv v_lxv v_lyv v_lzv v_vv file avg_${T}.dat ave one
+
+run             4000
+
+variable        a_from_lx equal lx/${nx}
+variable        a_from_ly equal ly/(${ny}*sqrt(3.0))
+variable        aavg equal 0.5*(v_a_from_lx+v_a_from_ly)
+variable        cavg equal lz/${nz}
+variable        Vcell equal vol/(${nx}*${ny}*${nz})
+
+variable        alphaa equal (v_aavg-${a0})/(${a0}*(${T}-${T0}))
+variable        alphac equal (v_cavg-${c0})/(${c0}*(${T}-${T0}))
+variable        V0 equal sqrt(3.0)*${a0}*${a0}*${c0}/2.0
+variable        alphaV equal (v_Vcell-v_V0)/(v_V0*(${T}-${T0}))
+
+print "T = ${T} K"
+print "a(T) = ${aavg} A"
+print "c(T) = ${cavg} A"
+print "Vcell(T) = ${Vcell} A^3"
+
+if "${T} > ${T0}" then &
+"print '${T} ${aavg} ${cavg} ${Vcell} ${alphaa} ${alphac} ${alphaV}' append thermal_expansion_summary.dat" &
+else &
+"print '${T} ${aavg} ${cavg} ${Vcell} 0.0 0.0 0.0' append thermal_expansion_summary.dat"
