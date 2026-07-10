@@ -1,0 +1,111 @@
+# ============================================================
+# STEP 2A-0K: Basic surface PE estimate for W at 0 K
+# Builds W(001) slab directly, minimizes, and computes:
+#   SBE_PE = -<PE_surface atom>
+# ============================================================
+
+clear
+units           metal
+dimension       3
+atom_style      atomic
+boundary        p p f
+
+# -----------------------------
+# User parameters
+# -----------------------------
+
+variable        a equal 3.165          # Yang used 3.165 A; you can use 3.152 for Jussila/Marinica 300 K
+variable        nx equal 21
+variable        ny equal 21
+variable        nz equal 21
+
+variable        potfile string w_eam4.fs
+
+variable        vacuum equal 50.0
+variable        fixed_thick equal 6.0
+variable        surf_thick equal 3.5
+
+# -----------------------------
+# Build W(001) slab
+# -----------------------------
+
+lattice         bcc ${a} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
+
+# Make slab region in lattice units, then add vacuum via box region in box units is harder.
+# Easier: build full slab first, then expand z box.
+region          slab block 0 ${nx} 0 ${ny} 0 ${nz} units lattice
+create_box      1 slab
+create_atoms    1 box
+
+mass            1 183.84
+
+pair_style      eam/fs
+pair_coeff      * * ${potfile} W
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+# Store original slab bounds before adding vacuum
+variable        zlo0 equal zlo
+variable        zhi0 equal zhi
+variable        zlo_slab equal ${zlo0}
+variable        zhi_slab equal ${zhi0}
+variable        zhi_vac equal ${zhi_slab}+${vacuum}
+
+change_box      all z final ${zlo_slab} ${zhi_vac} units box
+
+# -----------------------------
+# Define groups
+# -----------------------------
+
+variable        z_fixed_hi equal ${zlo_slab}+${fixed_thick}
+region          r_fixed block INF INF INF INF ${zlo_slab} ${z_fixed_hi} units box
+group           g_fixed region r_fixed
+
+variable        z_surf_lo equal ${zhi_slab}-${surf_thick}
+variable        z_surf_hi equal ${zhi_slab}+1.0
+region          r_surface block INF INF INF INF ${z_surf_lo} ${z_surf_hi} units box
+group           g_surface region r_surface
+
+group           g_mobile subtract all g_fixed
+
+variable        n_surface equal count(g_surface)
+variable        n_fixed equal count(g_fixed)
+print           "Number of surface atoms = ${n_surface}"
+print           "Number of fixed atoms = ${n_fixed}"
+# -----------------------------
+# Computes
+# -----------------------------
+
+compute         pe_atom all pe/atom
+compute         pe_surface g_surface reduce ave c_pe_atom
+compute         pe_mobile g_mobile reduce ave c_pe_atom
+
+variable        PE_surface equal c_pe_surface
+variable        SBE_PE equal -c_pe_surface
+variable        PE_mobile equal c_pe_mobile
+
+thermo          100
+thermo_style    custom step pe etotal lx ly lz v_PE_surface v_SBE_PE v_PE_mobile
+
+# -----------------------------
+# 0 K minimization
+# -----------------------------
+
+min_style       cg
+minimize        1.0e-14 1.0e-14 10000 10000
+
+# Force all compute-based variables to update
+run             0
+
+print "================================================"
+print "0 K basic surface PE estimate"
+print "Average top-layer PE/atom = ${PE_surface} eV/atom"
+print "SBE_PE = ${SBE_PE} eV"
+print "Average mobile PE/atom = ${PE_mobile} eV/atom"
+print "================================================"
+
+print "0 ${PE_surface} ${SBE_PE} ${PE_mobile}" append sbe_PE_0K.dat
+
+write_data      W001_slab_0K_minimized.data
+write_restart   W001_slab_0K_minimized.restart
