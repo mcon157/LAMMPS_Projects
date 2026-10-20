@@ -1,0 +1,123 @@
+# WC slab, prism / m-plane (10-10) surface.  Writes wche0.restart.
+# LAMMPS 29Oct2020.  No line continuations, no if/else, no loops.
+#
+# Cell orientation is unchanged from your version - it checks out:
+#   x = a-axis   [2-1-10]  spacing a         (in-plane, periodic)
+#   y = c-axis   [0001]    spacing c         (in-plane, periodic)
+#   z = m-normal [10-10]   spacing a*sqrt(3) (free-surface normal)
+# The y<->z swap of the basis fractions is consistent with the basal
+# file and the slab comes out stoichiometric (34 W planes, 34 C planes).
+#
+# Geometry worth knowing: the {10-10} planes are single-species and
+# UNEVENLY spaced along z -   ... W -0.846- C -1.691- W -0.846- C ...
+# so the top C plane sits only 0.85 A above the W plane below it.  That
+# is why a z-percentile surface metric misbehaves far more here than on
+# the basal surface.
+#
+# Same fixes as in_basal.step1: boundary p p f, no orphan zbl sub-style
+# and no 'pair_coeff 2 3 zbl 6 2', shared lattice constants, Stage B,
+# cycle-0 baseline dump.
+
+variable T        equal 614.6
+variable seed     equal 1008
+variable t_stageA equal 200      # ps, NVT on the whole mobile slab
+variable t_stageB equal 500      # ps, NVE upper + NVT lower (same as step 2)
+                                 # sweep: rerun with 10, 50, 200, 1000, 5000
+
+units           metal
+dimension       3
+atom_style      atomic
+boundary        p p f
+
+# Identical to in_basal.step1.  This file previously used a = 2.92329,
+# c = 2.81805, i.e. a different biaxial strain state on the two surfaces
+# you are comparing.
+variable a    equal 2.92949147531862
+variable c    equal 2.82420965326672
+variable clat equal ${c}/${a}
+variable blat equal sqrt(3.0)
+variable p23  equal 2.0/3.0
+variable p16  equal 1.0/6.0
+
+lattice custom ${a} a1 1.0 0 0 a2 0 ${clat} 0 a3 0 0 ${blat} basis 0.0 0.0 0.0 basis 0.5 0.0 0.5 basis 0.0 0.5 ${p23} basis 0.5 0.5 ${p16}
+
+# z bounds in lattice units of a*sqrt3 = 5.074 A.
+# 16.8  -> top plane is the C plane at 16.667 = 84.57 A (C-terminated)
+# 16.55 -> top plane is the W plane at 16.5   = 83.72 A (W-terminated)
+region          box  block 0 30 0 31 -1.7 22.3
+region          mbox block 0 30 0 31 0 16.8
+create_box      3 box
+create_atoms    2 region mbox basis 1 1 basis 2 1 basis 3 2 basis 4 2
+
+# still  z < 1.2  = 6.09 A       frozen anchor
+# lower  1.2-2.8  = 6.1-14.2 A   NVT thermostat layer
+# upper  > 2.8    = 14.2 A       NVE, free surface
+region          upper block INF INF INF INF 2.8 INF
+region          lower block INF INF INF INF 1.2 2.8
+region          still block INF INF INF INF INF 1.2
+group           upper region upper
+group           lower region lower
+group           still region still
+group           mov   union upper lower
+
+group           W  type 1
+group           C  type 2
+group           He type 3
+
+mass            1 183.85
+mass            2 12.011
+mass            3 4.0026
+
+# No separate zbl sub-style: tersoff/zbl carries the wall for W-W, W-C
+# and C-C, and the He interactions come entirely from the tables.
+pair_style      hybrid/overlay tersoff/zbl table linear 10000
+pair_coeff      * * tersoff/zbl WCH.tersoff W C NULL
+pair_coeff      1 3 table WHe.table WHe
+pair_coeff      2 3 table CHe.table CHe
+pair_coeff      3 3 table HeHe.table HeHe
+
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+timestep        0.001
+
+# Top-plane height tracker.  Window is 0.6 A here, because the C/W plane
+# spacing at this surface is only 0.846 A.
+run             0 post no
+variable        ztop0 equal $(bound(all,zmax))
+variable        zwin  equal ${ztop0}-0.6
+region          topslab block INF INF INF INF ${zwin} INF units box
+group           toplayer region topslab
+compute         zt toplayer reduce ave z
+print           "top of as-built slab: ${ztop0} A"
+
+thermo          1000
+thermo_style    custom step time temp pe ke etotal pxx pyy pzz c_zt
+thermo_modify   lost warn
+
+fix             freeze still setforce 0.0 0.0 0.0
+min_style       cg
+minimize        1.0e-15 1.0e-15 20000 200000
+
+# --- Stage A: NVT everywhere -------------------------------------------
+velocity        mov create ${T} ${seed} rot no mom yes dist gaussian
+dump            traj all custom 20000 traj_prism.lammps id type x y z
+dump_modify     traj sort id
+fix             nvtA mov nvt temp ${T} ${T} 0.1
+fix             avzA all ave/time 100 10 1000 c_zt file surf_z_stageA.dat
+variable        nA equal 1000*${t_stageA}
+run             ${nA}
+unfix           avzA
+unfix           nvtA
+
+# --- Stage B: same integration split step 2 uses ------------------------
+fix             nveB upper nve
+fix             nvtB lower nvt temp ${T} ${T} 0.1
+fix             avzB all ave/time 100 10 1000 c_zt file surf_z_stageB.dat
+variable        nB equal 1000*${t_stageB}
+run             ${nB}
+
+write_restart   wche0.restart
+write_dump      all custom dump.bulk-0.lammps id type x y z modify sort id
+write_dump      all custom dump.full-0.lammps id type x y z modify sort id
+
+print           "step 1 complete: wche0.restart and dump.bulk-0/full-0 written"
