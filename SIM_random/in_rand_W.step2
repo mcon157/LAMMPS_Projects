@@ -1,0 +1,161 @@
+# =====================================================================
+# Single-impact sputtering (SIM) of one random-orientation W hemisphere.
+# Every impact re-reads the same relaxed surface from in_rand_W.step1.
+#
+#   lmp -in in_rand_W.step2 -var s 7 -var e 200
+#   lmp -in in_rand_W.step2 -var s 7 -var e 200 -var nimp 1000 -var ang 30
+#
+# Sputtering is counted two ways, so the result can be compared both with
+# Jussila 2018 and with our CIM decks:
+#   cap : atom crossed the capture plane z_s + d_cap (counted + deleted
+#         on the spot; same idea as the WC CIM deck)
+#   end : atom sits above z_s + d_cut when the impact ends (Jussila's
+#         criterion: 5.5 A = W EAM cutoff, so it can no longer be pulled back)
+#   lost: atom left the box between polls (rare; also sputtered)
+# Sputtered total = cap + end + lost.
+#
+# He fate per impact: 0 implanted, 1 reflected (captured, above the cut at
+# the end, or last seen above the cut before leaving the box), 2 left
+# through the hemisphere.
+# hit_fixed = 1 if the He reached the fixed shell - those impacts can
+# bounce back unphysically; Jussila reports them as the lower error bar.
+#
+# Output (append): rand_W_<tag><s>_<e>eV.dat, one line per impact.
+# LAMMPS 29Oct2020.  No line continuations, no if/else.
+# =====================================================================
+
+variable s        index 1
+variable tag      index r
+variable e        index 200        # He energy (eV)
+variable ang      index 30         # polar angle from the surface normal (deg)
+variable nimp     index 1000       # impacts on this surface
+variable T        index 739        # K, must match step 1
+variable L_imp    index 12.66      # side of the square impact area (A); Jussila: 4a
+variable h        index 8.0        # launch height above z_s (A)
+variable d_cut    index 5.5        # 'end' criterion above z_s (A)
+variable d_cap    index 18.0       # capture plane above z_s (A)
+variable t_max    index 10.0       # ps, hard cap per impact
+variable t_settle index 2.0        # ps kept after the He thermalizes (late ejection)
+variable ke_th    index 0.2        # eV, He counted as thermalized
+variable R        index 50.0       # must match step 1
+variable d_fix    index 3.0        # must match step 1
+
+# first random() call seeds the stream for the whole run (surface, energy)
+variable seed0 equal 7919*${s}+104729*${e}+13
+variable warm  equal $(random(0.0,1.0,v_seed0))
+
+print "# i s e ang phi xt yt nW_cap nW_end nW_lost KE_W_cap he_fate hit_fixed t_end_ps" file rand_W_${tag}${s}_${e}eV.dat screen no
+
+variable i loop ${nimp}
+label loop_impact
+
+clear
+units        metal
+atom_style   atomic
+atom_modify  map array
+read_restart rand_W_${tag}${s}.restart
+
+mass 1 183.84
+mass 2 4.0026
+pair_style hybrid eam/fs table linear 10000
+pair_coeff * * eam/fs w_eam4.fs W NULL
+pair_coeff 1 2 table WHe.table WHe
+pair_coeff 2 2 table HeHe.table HeHe
+neighbor     2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+# groups fixed / thermo / core / mobile / w come back from the restart
+variable nW0   equal $(count(w))
+region   cyl   cylinder z 0.0 0.0 8.0 INF INF units box
+variable zs    equal $(bound(w,zmax,cyl))
+variable zcap  equal $(v_zs+v_d_cap)
+variable zcut  equal $(v_zs+v_d_cut)
+region   r_cap block INF INF INF INF ${zcap} INF units box
+region   r_cut block INF INF INF INF ${zcut} INF units box
+variable Rfix  equal $(v_R-v_d_fix)
+region   r_fsph sphere 0.0 0.0 0.0 ${Rfix} side out units box
+region   r_solid block INF INF INF INF INF ${zs} units box
+region   r_fix intersect 2 r_fsph r_solid     # fixed shell, below the surface only
+
+# ---- projectile: random aim point in the square, random azimuth --------
+variable phi  equal $(360.0*random(0.0,1.0,v_seed0))
+variable xt   equal $(v_L_imp*(random(0.0,1.0,v_seed0)-0.5))
+variable yt   equal $(v_L_imp*(random(0.0,1.0,v_seed0)-0.5))
+variable th   equal $(v_ang*PI/180.0)
+variable ph   equal $(v_phi*PI/180.0)
+# start point is moved back along the incoming direction so the ion
+# reaches z_s exactly at (xt, yt)
+variable x0   equal $(v_xt-v_h*tan(v_th)*cos(v_ph))
+variable y0   equal $(v_yt-v_h*tan(v_th)*sin(v_ph))
+variable z0   equal $(v_zs+v_h)
+variable vtot equal $(sqrt(2.0*v_e*9648.533/4.0026))
+variable vx   equal $(v_vtot*sin(v_th)*cos(v_ph))
+variable vy   equal $(v_vtot*sin(v_th)*sin(v_ph))
+variable vz   equal $(-v_vtot*cos(v_th))
+
+create_atoms 2 single ${x0} ${y0} ${z0} units box
+group he type 2
+velocity he set ${vx} ${vy} ${vz} units box
+group nvegrp union core he
+group movers union mobile he
+
+reset_timestep 0
+timestep 0.001
+fix dtr  movers dt/reset 5 1.0e-8 0.001 0.05 units box
+fix nve1 nvegrp nve
+fix nvt1 thermo nvt temp ${T} ${T} 0.1
+thermo       1000
+thermo_style custom step time temp pe
+thermo_modify lost ignore     # after thermo_style, which resets it
+
+variable nWcap  equal 0
+variable keWcap equal 0.0
+variable herefl equal 0
+variable hefix  equal 0
+variable t_th   equal -1.0
+variable lastup equal 0
+run 0 post no
+variable t0 equal $(time)
+
+label chunk
+run 100 post no
+variable t_now equal $(time-v_t0)
+
+# capture plane: count, then delete
+variable dn  equal $(count(w,r_cap))
+variable dke equal $(ke(w,r_cap))
+variable dhe equal $(count(he,r_cap))
+variable nWcap  equal ${nWcap}+${dn}
+variable keWcap equal ${keWcap}+${dke}
+variable herefl equal ${herefl}+${dhe}
+delete_atoms region r_cap compress no
+
+# The impact does NOT end when the He leaves: atoms it set moving can
+# still be ejected.  He gone (reflected/lost) counts as 'thermalized'
+# (ke of an empty group is 0) and starts the t_settle clock.
+# remember whether the He was last seen above the cut (a reflected He at
+# grazing incidence can leave the box sideways before the capture plane)
+if "$(count(he)) > 0" then "variable lastup equal $(count(he,r_cut))"
+variable infix equal $(count(he,r_fix))
+if "${infix} > 0" then "variable hefix equal 1"
+variable heke equal $(ke(he))
+if "${heke} < ${ke_th} && ${t_th} < 0.0" then "variable t_th equal ${t_now}"
+variable t_stop equal $(v_t_th+v_t_settle)
+if "${t_th} >= 0.0 && ${t_now} > ${t_stop}" then "jump SELF impact_done"
+if "${t_now} < ${t_max}" then "jump SELF chunk"
+
+label impact_done
+variable t_end  equal $(time-v_t0)
+variable nWend  equal $(count(w,r_cut))
+# atoms that left the box sideways/top between polls (thermo_modify lost ignore)
+variable nWlost equal $(v_nW0-v_nWcap-count(w))
+variable nhe    equal $(count(he))
+variable heup   equal $(count(he,r_cut))
+# fate: 1 reflected, 2 left through the hemisphere, 0 implanted
+variable refl   equal $((v_herefl+v_heup+(v_nhe==0)*v_lastup)>0)
+variable fate   equal $(v_refl*1+(v_refl==0)*(v_nhe==0)*2)
+print "${i} ${s} ${e} ${ang} ${phi} ${xt} ${yt} ${nWcap} ${nWend} ${nWlost} ${keWcap} ${fate} ${hefix} ${t_end}" append rand_W_${tag}${s}_${e}eV.dat screen no
+print "impact ${i}: W cap ${nWcap} end ${nWend}  fate ${fate} hit_fixed ${hefix}  t ${t_end} ps"
+
+next i
+jump SELF loop_impact

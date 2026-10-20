@@ -1,0 +1,151 @@
+# =====================================================================
+# Random-orientation W hemisphere for single-impact sputtering (SIM).
+# Method after Jussila, Granberg & Nordlund, Nucl. Mater. Energy 17
+# (2018) 113: rotate a crystal by random Euler angles, cut a hemisphere
+# whose flat face (z = 0) is the irradiated surface, and split it into
+# NVE core / thermostat shell / fixed shell.
+#
+# One surface per run.  The surface ID s sets every random number, so
+# s = 1..Nsurf gives Nsurf independent orientations and re-running a
+# given s rebuilds exactly the same surface.
+#
+#   lmp -in in_rand_W.step1 -var s 7
+#   lmp -in in_rand_W.step1 -var s 7 -var T 300          (Jussila conditions)
+#
+# Low-index references with random azimuth only (Jussila used 30 each):
+#   (001): -var beta 0       -var gamma 0
+#   (011): -var beta 45      -var gamma 0
+#   (111): -var beta 54.7356 -var gamma 45
+#   (alpha stays random = random azimuth; also pass -var tag 001 etc.)
+#
+# Writes:  rand_W_<tag><s>.restart      -> read by in_rand_W.step2
+#          dump.rand_W_<tag><s>.lammps   -> OVITO / schematics
+#          rand_W_surfaces.dat           -> one line per surface (append):
+#            tag s alpha beta gamma nx ny nz ox oy oz nW z_s
+#
+# LAMMPS 29Oct2020.  No line continuations, no if/else.
+# =====================================================================
+
+# ---- knobs ----------------------------------------------------------
+variable s       index 1          # surface ID (1, 2, 3, ...)
+variable tag     index r          # r = random; 001 / 011 / 111 for references
+variable T       index 739        # K; 0.2 Tm.  300 K reproduces Jussila 2018
+variable a       index 3.165      # W lattice constant at T (A).  CHECK: use the
+                                  # value from in_W001.step1 / an NPT run of
+                                  # w_eam4.fs at T (Jussila: 3.152 at 300 K)
+variable R       index 50.0       # hemisphere radius (A); Jussila 35, checked 50
+variable d_fix   index 3.0        # fixed outer shell thickness (A)
+variable d_thermo index 10.0      # fixed + thermostat shell thickness (A)
+variable t_eq    index 10.0       # ps relaxation before impacts (Jussila: 10 ps)
+variable vac     index 40.0       # vacuum above the surface (A)
+
+# ---- random orientation (immediate $() evaluation freezes each draw) --
+# LAMMPS keeps ONE random stream per run for random() in equal-style
+# variables, seeded by the first call; the seed of every later call is
+# ignored.  So the first draw carries the surface ID.
+variable seed0   equal 1000003*${s}+17
+variable u_alpha equal $(random(0.0,1.0,v_seed0))
+variable u_beta  equal $(random(0.0,1.0,v_seed0))
+variable u_gamma equal $(random(0.0,1.0,v_seed0))
+variable u_ox    equal $(random(0.0,1.0,v_seed0))
+variable u_oy    equal $(random(0.0,1.0,v_seed0))
+variable u_oz    equal $(random(0.0,1.0,v_seed0))
+
+# ZXZ Euler angles, applied as R = Rz(alpha) Rx(beta) Rz(gamma).
+# alpha, gamma uniform; cos(beta) uniform = uniform over all orientations.
+variable alpha   index $(360.0*v_u_alpha)
+variable beta    index $(180.0/PI*acos(2.0*v_u_beta-1.0))
+variable gamma   index $(360.0*v_u_gamma)
+# random lattice origin: the z = 0 cut samples every termination/step position
+variable ox      equal $(0.999*v_u_ox)
+variable oy      equal $(0.999*v_u_oy)
+variable oz      equal $(0.999*v_u_oz)
+
+# surface normal (lab +z) expressed in the crystal frame: R^T z
+variable nx equal $(sin(v_beta*PI/180.0)*sin(v_gamma*PI/180.0))
+variable ny equal $(sin(v_beta*PI/180.0)*cos(v_gamma*PI/180.0))
+variable nz equal $(cos(v_beta*PI/180.0))
+print "surface ${tag}${s}: alpha=${alpha} beta=${beta} gamma=${gamma}  normal(crystal) = ${nx} ${ny} ${nz}"
+
+# ---- geometry ---------------------------------------------------------
+units           metal
+dimension       3
+atom_style      atomic
+atom_modify     map array
+boundary        f f f
+
+variable L    equal $(v_R+8.0)
+variable Rbig equal $(v_R+3.0)
+region   box  block -${L} ${L} -${L} ${L} -${L} ${vac} units box
+create_box 2 box                         # type 1 = W, type 2 = He (step 2)
+
+lattice  bcc ${a} origin ${ox} ${oy} ${oz}
+region   ball sphere 0.0 0.0 0.0 ${Rbig} units box
+create_atoms 1 region ball
+
+# rotate the ball about its own centre (the ball maps onto itself)
+displace_atoms all rotate 0.0 0.0 0.0 0 0 1 ${gamma} units box
+displace_atoms all rotate 0.0 0.0 0.0 1 0 0 ${beta}  units box
+displace_atoms all rotate 0.0 0.0 0.0 0 0 1 ${alpha} units box
+
+# keep the lower half of a sphere of radius R: flat face at z = 0
+region   hemi_in  sphere 0.0 0.0 0.0 ${R} units box
+region   lower    block INF INF INF INF INF 0.0 units box
+region   hemi     intersect 2 hemi_in lower
+region   outside  intersect 2 hemi_in lower side out
+delete_atoms region outside
+
+# ---- layers: fixed / thermostat / NVE ---------------------------------
+variable Rfix  equal $(v_R-v_d_fix)
+variable Rthm  equal $(v_R-v_d_thermo)
+region   r_fix  sphere 0.0 0.0 0.0 ${Rfix} side out units box
+region   r_thm  sphere 0.0 0.0 0.0 ${Rthm} side out units box
+group    w      type 1
+group    fixed  region r_fix
+group    outer  region r_thm
+group    thermo subtract outer fixed
+group    core   subtract all outer
+group    mobile union core thermo
+
+mass 1 183.84
+mass 2 4.0026
+
+# Must match in_W_cim / in_W001 decks.
+pair_style hybrid eam/fs table linear 10000
+pair_coeff * * eam/fs w_eam4.fs W NULL
+pair_coeff 1 2 table WHe.table WHe
+pair_coeff 2 2 table HeHe.table HeHe
+
+neighbor     2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+variable nW equal $(count(w))
+print "atoms: W ${nW}  (fixed $(count(fixed)), thermostat $(count(thermo)), core $(count(core)))"
+
+# ---- relax, then thermalize with the production integration split ------
+fix freeze fixed setforce 0.0 0.0 0.0
+min_style cg
+minimize 0.0 1.0e-4 5000 50000
+
+timestep 0.001
+velocity mobile create ${T} $(v_seed0+1) dist gaussian mom yes rot yes loop geom
+velocity fixed  set 0.0 0.0 0.0
+fix nve_core core   nve
+fix nvt_shell thermo nvt temp ${T} ${T} 0.1
+thermo       1000
+thermo_style custom step time temp pe
+thermo_modify lost ignore     # after thermo_style, which resets it
+run $(round(v_t_eq*1000.0))
+
+unfix nve_core
+unfix nvt_shell
+unfix freeze
+
+# ---- surface height near the impact point & surface log ----------------
+region   cyl cylinder z 0.0 0.0 8.0 INF INF units box
+variable zsurf equal $(bound(w,zmax,cyl))
+print "${tag} ${s} ${alpha} ${beta} ${gamma} ${nx} ${ny} ${nz} ${ox} ${oy} ${oz} ${nW} ${zsurf}" append rand_W_surfaces.dat screen no
+
+write_restart rand_W_${tag}${s}.restart
+write_dump all custom dump.rand_W_${tag}${s}.lammps id type x y z modify sort id
+print "step 1 done: rand_W_${tag}${s}.restart  (z_surf = ${zsurf} A)"

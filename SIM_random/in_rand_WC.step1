@@ -1,0 +1,172 @@
+# =====================================================================
+# Random-orientation WC hemisphere for single-impact sputtering (SIM).
+# Method after Jussila, Granberg & Nordlund, Nucl. Mater. Energy 17
+# (2018) 113: rotate a crystal by random Euler angles, cut a hemisphere
+# whose flat face (z = 0) is the irradiated surface, and split it into
+# NVE core / thermostat shell / fixed shell.
+#
+# One surface per run.  The surface ID s sets every random number, so
+# s = 1..Nsurf gives Nsurf independent orientations and re-running a
+# given s rebuilds exactly the same surface.
+#
+#   lmp -in in_rand_WC.step1 -var s 7
+#   lmp -in in_rand_WC.step1 -var s 7 -var T 300          (Jussila conditions)
+#
+# Low-index references with random azimuth only (same idea as Jussila's
+# low-index W sets).  Crystal frame of the cell below: x = [2-1-10] (a),
+# y = [01-10] (m), z = [0001] (c).
+#   basal (0001):  -var beta 0  -var gamma 0  -var tag bas
+#   prism (10-10): -var beta 90 -var gamma 0  -var tag pri    (normal along y = m)
+#   a-plane (11-20): -var beta 90 -var gamma 90 -var tag apl  (normal along x = a)
+#   (alpha stays random = random azimuth)
+# Note: the termination (C or W on top) of a reference surface is set by
+# the random origin shift; log the top-layer composition (written below).
+#
+# Writes:  rand_WC_<tag><s>.restart      -> read by in_rand_WC.step2
+#          dump.rand_WC_<tag><s>.lammps   -> OVITO / schematics
+#          rand_WC_surfaces.dat          -> one line per surface (append):
+#            tag s alpha beta gamma nx ny nz ox oy oz nW nC z_s topW topC fC_top
+#
+# LAMMPS 29Oct2020.  No line continuations, no if/else.
+# =====================================================================
+
+# ---- knobs ----------------------------------------------------------
+variable s       index 1          # surface ID (1, 2, 3, ...)
+variable tag     index r          # r = random; 001 / 011 / 111 for references
+variable T       index 614.6      # K; 0.2 Tm (same as the WC slabs)
+variable a       index 2.92949147531862   # WC a at T, identical to in_basal/in_prism.step1
+variable c       index 2.82420965326672   # WC c at T
+variable R       index 50.0       # hemisphere radius (A); Jussila 35 (W), checked 50
+variable d_fix   index 3.0        # fixed outer shell thickness (A)
+variable d_thermo index 10.0      # fixed + thermostat shell thickness (A)
+variable t_eq    index 10.0       # ps relaxation before impacts (Jussila: 10 ps)
+variable vac     index 40.0       # vacuum above the surface (A)
+
+# ---- random orientation (immediate $() evaluation freezes each draw) --
+# LAMMPS keeps ONE random stream per run for random() in equal-style
+# variables, seeded by the first call; the seed of every later call is
+# ignored.  So the first draw carries the surface ID.
+variable seed0   equal 1000003*${s}+17
+variable u_alpha equal $(random(0.0,1.0,v_seed0))
+variable u_beta  equal $(random(0.0,1.0,v_seed0))
+variable u_gamma equal $(random(0.0,1.0,v_seed0))
+variable u_ox    equal $(random(0.0,1.0,v_seed0))
+variable u_oy    equal $(random(0.0,1.0,v_seed0))
+variable u_oz    equal $(random(0.0,1.0,v_seed0))
+
+# ZXZ Euler angles, applied as R = Rz(alpha) Rx(beta) Rz(gamma).
+# alpha, gamma uniform; cos(beta) uniform = uniform over all orientations.
+variable alpha   index $(360.0*v_u_alpha)
+variable beta    index $(180.0/PI*acos(2.0*v_u_beta-1.0))
+variable gamma   index $(360.0*v_u_gamma)
+# random lattice origin: the z = 0 cut samples every termination/step position
+variable ox      equal $(0.999*v_u_ox)
+variable oy      equal $(0.999*v_u_oy)
+variable oz      equal $(0.999*v_u_oz)
+
+# surface normal (lab +z) expressed in the crystal frame: R^T z
+variable nx equal $(sin(v_beta*PI/180.0)*sin(v_gamma*PI/180.0))
+variable ny equal $(sin(v_beta*PI/180.0)*cos(v_gamma*PI/180.0))
+variable nz equal $(cos(v_beta*PI/180.0))
+print "surface ${tag}${s}: alpha=${alpha} beta=${beta} gamma=${gamma}  normal(crystal) = ${nx} ${ny} ${nz}"
+
+# ---- geometry ---------------------------------------------------------
+units           metal
+dimension       3
+atom_style      atomic
+atom_modify     map array
+boundary        f f f
+
+variable L    equal $(v_R+8.0)
+variable Rbig equal $(v_R+3.0)
+region   box  block -${L} ${L} -${L} ${L} -${L} ${vac} units box
+create_box 3 box                         # 1 = W, 2 = C, 3 = He (step 2)
+
+# orthorhombic 4-atom WC cell, same basis as in_basal.step1
+variable clat equal $(v_c/v_a)
+variable blat equal $(sqrt(3.0))
+variable p23  equal $(2.0/3.0)
+variable p16  equal $(1.0/6.0)
+lattice  custom ${a} a1 1.0 0 0 a2 0 ${blat} 0 a3 0 0 ${clat} basis 0.0 0.0 0.0 basis 0.5 0.5 0.0 basis 0.0 ${p23} 0.5 basis 0.5 ${p16} 0.5 origin ${ox} ${oy} ${oz}
+region   ball sphere 0.0 0.0 0.0 ${Rbig} units box
+create_atoms 2 region ball basis 1 1 basis 2 1 basis 3 2 basis 4 2
+
+# rotate the ball about its own centre (the ball maps onto itself)
+displace_atoms all rotate 0.0 0.0 0.0 0 0 1 ${gamma} units box
+displace_atoms all rotate 0.0 0.0 0.0 1 0 0 ${beta}  units box
+displace_atoms all rotate 0.0 0.0 0.0 0 0 1 ${alpha} units box
+
+# keep the lower half of a sphere of radius R: flat face at z = 0
+region   hemi_in  sphere 0.0 0.0 0.0 ${R} units box
+region   lower    block INF INF INF INF INF 0.0 units box
+region   hemi     intersect 2 hemi_in lower
+region   outside  intersect 2 hemi_in lower side out
+delete_atoms region outside
+
+# ---- layers: fixed / thermostat / NVE ---------------------------------
+variable Rfix  equal $(v_R-v_d_fix)
+variable Rthm  equal $(v_R-v_d_thermo)
+region   r_fix  sphere 0.0 0.0 0.0 ${Rfix} side out units box
+region   r_thm  sphere 0.0 0.0 0.0 ${Rthm} side out units box
+group    w      type 1
+group    c      type 2
+group    bulk   type 1 2
+group    fixed  region r_fix
+group    outer  region r_thm
+group    thermo subtract outer fixed
+group    core   subtract all outer
+group    mobile union core thermo
+
+mass 1 183.84
+mass 2 12.011
+mass 3 4.0026
+
+# Same as the CIM / step-1 WC decks (no extra zbl sub-style on C-He).
+pair_style hybrid/overlay tersoff/zbl table linear 10000
+pair_coeff * * tersoff/zbl WCH.tersoff W C NULL
+pair_coeff 1 3 table WHe.table WHe
+pair_coeff 2 3 table CHe.table CHe
+pair_coeff 3 3 table HeHe.table HeHe
+
+neighbor     2.0 bin
+neigh_modify every 1 delay 0 check yes
+
+variable nW equal $(count(w))
+variable nC equal $(count(c))
+print "atoms: W ${nW}  C ${nC}  (fixed $(count(fixed)), thermostat $(count(thermo)), core $(count(core)))"
+
+# ---- relax, then thermalize with the production integration split ------
+fix freeze fixed setforce 0.0 0.0 0.0
+min_style cg
+minimize 0.0 1.0e-4 5000 50000
+
+timestep 0.001
+velocity mobile create ${T} $(v_seed0+1) dist gaussian mom yes rot yes loop geom
+velocity fixed  set 0.0 0.0 0.0
+fix nve_core core   nve
+fix nvt_shell thermo nvt temp ${T} ${T} 0.1
+thermo       1000
+thermo_style custom step time temp pe
+thermo_modify lost ignore     # after thermo_style, which resets it
+run $(round(v_t_eq*1000.0))
+
+unfix nve_core
+unfix nvt_shell
+unfix freeze
+
+# ---- surface height near the impact point & surface log ----------------
+region   cyl cylinder z 0.0 0.0 8.0 INF INF units box
+variable zsurf equal $(bound(bulk,zmax,cyl))
+# composition of the top d_top A inside the impact column (r < 10 A):
+# a random cut exposes a mix of W and C - keep it as a covariate
+variable d_top index 1.5
+variable ztop3 equal $(v_zsurf-v_d_top)
+region   topcol cylinder z 0.0 0.0 10.0 ${ztop3} INF units box
+variable topW  equal $(count(w,topcol))
+variable topC  equal $(count(c,topcol))
+variable fCtop equal $(v_topC/(v_topW+v_topC))
+print "${tag} ${s} ${alpha} ${beta} ${gamma} ${nx} ${ny} ${nz} ${ox} ${oy} ${oz} ${nW} ${nC} ${zsurf} ${topW} ${topC} ${fCtop}" append rand_WC_surfaces.dat screen no
+
+write_restart rand_WC_${tag}${s}.restart
+write_dump all custom dump.rand_WC_${tag}${s}.lammps id type x y z modify sort id
+print "step 1 done: rand_WC_${tag}${s}.restart  (z_surf = ${zsurf} A, top-layer C fraction ${fCtop})"
