@@ -1,0 +1,471 @@
+# =====================================================================
+# He implantation / sputtering on a W-C slab   -   CIM cycle driver
+#
+# CHANGES IN THIS REVISION (marked ### FIX / ### NEW):
+#
+#  A. ### NEW  FIXED 20 ps CYCLE CLOCK.  Every cycle now spans exactly
+#              t_cycle = 20 ps from insertion to the next insertion,
+#              regardless of when the projectile thermalizes/reflects.
+#              Previously the cycle was "variable impact phase (0-10 ps)
+#              + 20 ps relaxation" = 20-30 ps, so the effective flux
+#              drifted from cycle to cycle and between energies.
+#              The cycle prints its true duration to cycle_time.dat and
+#              the equivalent flux is printed at cycle 1.
+#
+#  B. ### FIX  C-He double count.  This file already dropped the orphan
+#              'zbl' sub-style, but the SOURCE was still live in
+#              in_basal.step1 / in_prism.step1 - and the restart is what
+#              carries the pair style forward.  Both step-1 files are
+#              now fixed as well.  See the note in the pair section.
+#
+#  C. ### FIX  Correlated random numbers.  'rand', 'hex' and 'hey' all
+#              used the SAME seed.  In LAMMPS each equal-style variable
+#              owns its RNG and seeds it independently, so all three
+#              drew the identical uniform deviate: every impact landed
+#              on the box diagonal (x == y up to the box aspect ratio)
+#              and the azimuthal angle was fully determined by the
+#              position.  Three independent seeds now.
+#
+#  D. ### FIX  Insertion height tracks the actual surface instead of the
+#              hard-coded z = 88 A.  That constant gave a 4.7 A standoff
+#              on basal but only 3.6 A on prism - i.e. the two surfaces
+#              you are comparing had different insertion geometry, and
+#              on prism the He was being created inside the tail of the
+#              He-W / He-C tables.
+#
+#  E. ### FIX  'delete_atoms ... compress no' everywhere.  The default
+#              (compress yes) renumbers atom IDs after every deletion,
+#              so IDs mean different atoms in different cycles and any
+#              per-atom tracking across the dump sequence is invalid.
+#
+#  F. ### FIX  'jump SELF' instead of 'jump in.step2' - the script no
+#              longer breaks if you rename it per energy/case.  (The
+#              previous revision claimed this but still hard-coded
+#              in.step2, so it only looped if the file had that name.)
+#
+#  G. ### FIX  One set of integration fixes for the whole cycle.  The
+#              old impact-phase group 'cascade' (upper + he) and
+#              relaxation group 'free' (all - lower - still) were the
+#              same set of atoms; swapping fixes mid-cycle bought
+#              nothing and reset the adaptive-dt state.
+#
+#  H. ### NEW  Guard for a deleted projectile before xcm(he_new,...) is
+#              evaluated on an empty group.
+#
+#  I. ### NEW  ELECTRONIC STOPPING (fix electron/stopping, EXTRA-FIX),
+#              blocks tagged ### ES.  Same as in_CIM_ES.step2 except J.
+#
+#  J. ### NEW  COMPOSITION-AWARE STOPPING, UPDATED EVERY IMPACT.
+#              The slab is split at z_alt = zsurf - d_alt:
+#                altered layer  z_alt < z <= zsurf   (where the He stops
+#                               and where C depletion happens)
+#                deep slab      z <= z_alt
+#              At the start of every cycle the C/W ratio is counted in
+#              each part, and elstop.py writes a stopping table for each
+#              by Bragg's rule:  S_p = n_W*sig_p@W + n_C*sig_p@C,  with
+#              n_W = nW_ref (W sublattice taken as intact: C sputtering
+#              leaves C vacancies) and n_C = (C/W)*nW_ref.  The sig's
+#              come from a basis file (SRIM or RustBCA model) made once.
+#              Two fixes, one per region, so the deep slab keeps its own
+#              (pristine) stopping instead of the surface-averaged one.
+#              C/W per cycle is logged in elstop.dat.
+#              The tables are written by 'shell' on MPI rank 0, which is
+#              also the only rank that reads them (then broadcasts).
+#
+# Usage:
+#   lmp -in in_CIM_ESdyn.step2 -var e 100
+#   lmp -in in_CIM_ESdyn.step2 -var e 100 -var istart 501        # resume
+#   lmp -in in_CIM_ESdyn.step2 -var e 100 -var ecut 5.0          # threshold test
+#   lmp -in in_CIM_ESdyn.step2 -var e 100 -var elstop_basis basis_srim.dat -var d_alt 10.0
+# =====================================================================
+
+# ---- command-line overridable knobs (index style => -var works) -----
+variable istart        index 1
+variable nimplants     index 10000
+variable e             index 100          # He impact energy (eV)
+variable T             index 614.6       # K
+variable ang           index 30          # incidence angle from normal (deg)
+variable t_cycle       index 20.0        # ps, insertion -> next insertion
+variable t_impact      index 10.0        # ps, max length of the hot phase
+variable standoff      index 8.0         # A above the surface for insertion
+variable z_channel     index 14.0        # A; He below this = into the thermostat layer
+variable he_dump_every index 50          # write dump.he-traj only every Nth cycle
+variable bak_every     index 500         # extra numbered restart every Nth cycle
+
+### ES: electronic-stopping knobs
+variable ecut          index 10.0        # eV; no friction on atoms below this KE
+variable elstop_basis  index basis_rustbca.dat # sigma(E) per projectile@element, from elstop.py basis
+variable elstop_py     index elstop.py       # path to the table writer
+variable pybin         index python3         # python on the compute node
+variable d_alt         index 15.0            # A, altered-layer thickness below zsurf
+variable nW_ref        index 0.04806         # W atoms/A^3 (WC 15.63 g/cm3; bcc W would be 0.06306)
+
+variable i loop ${istart} ${nimplants}
+label loop_implant
+
+print "##### He implant cycle ${i} #####"
+
+clear
+
+units           metal
+atom_style      atomic
+atom_modify     map array
+
+if "${i} == 1" then &
+   "read_restart wche0.restart" &
+else &
+   "read_restart he_cycle.restart"
+
+### FIX: read_restart overwrites whatever 'boundary' was set before it,
+#        so the non-periodic z has to be (re)asserted here.  The step-1
+#        files now also set 'boundary p p f', but this is cheap insurance.
+change_box all boundary p p f
+
+# ---- species / role groups ------------------------------------------
+group w    type 1
+group c    type 2
+group he   type 3
+group bulk type 1 2
+
+group fixed_layers union lower still          # membership comes from the restart
+group latmob       subtract bulk still        # every integrated lattice atom
+
+variable nw  equal count(w)
+variable nc  equal count(c)
+variable nw0 equal ${nw}
+variable nc0 equal ${nc}
+
+neighbor        2.0 bin
+neigh_modify    once no every 1 delay 0 check yes
+
+mass 1 183.85
+mass 2 12.011
+mass 3 4.0026
+
+# ---- potential -------------------------------------------------------
+### FIX (B): no separate 'zbl' sub-style.  tersoff/zbl already supplies
+#            the universal repulsive wall for W-W / W-C / C-C, and the
+#            He interactions come entirely from the tables.  Adding
+#            'pair_coeff 2 3 zbl 6 2' on top of CHe.table double-counted
+#            the C-He repulsion - and only for C-He, which biased the
+#            C sublattice specifically (exactly the sublattice your
+#            sputtering yields are dominated by).
+#
+#     If the tables have NO short-range wall (check: head CHe.table; if
+#     r starts near 0.1-0.5 A with keV-scale energies, the wall is
+#     there), add ZBL back for ALL THREE He pairs, never just one:
+#         pair_style ... table linear 10000 zbl 0.8 1.4
+#         pair_coeff 1 3 zbl 74 2
+#         pair_coeff 2 3 zbl  6 2
+#         pair_coeff 3 3 zbl  2 2
+pair_style hybrid/overlay tersoff/zbl table linear 10000
+pair_coeff * * tersoff/zbl WCH.tersoff W C NULL
+pair_coeff 1 3 table WHe.table  WHe
+pair_coeff 2 3 table CHe.table  CHe
+pair_coeff 3 3 table HeHe.table HeHe
+
+# ---- geometry, referenced to the CURRENT surface --------------------
+### FIX (D): everything below used to be hard-coded (zimp = zref = 88,
+#            ztop_kill = 95) which is basal-specific and does not follow
+#            the receding surface.
+variable zsurf     equal $(bound(bulk,zmax))
+variable zimp      equal ${zsurf}+${standoff}
+variable z_esc     equal ${zimp}              # back above launch height = escaped
+variable z_reflect equal ${zsurf}+2.0         # reflected-He cleanup plane
+variable ztop_kill equal ${zsurf}+18.0        # sputter capture / removal plane
+variable zbot_kill equal -5.0
+
+print "Cycle ${i}: z_surface=${zsurf}  z_insert=${zimp}  z_kill_top=${ztop_kill}"
+
+region r_kill_top block INF INF INF INF ${ztop_kill} INF units box
+region r_kill_bot block INF INF INF INF INF ${zbot_kill} units box
+group  g_kill_top dynamic all region r_kill_top every 1
+
+# ---- projectile kinematics ------------------------------------------
+variable theta_rad equal ${ang}*3.14159265358979/180.0
+variable vtot equal (((2*${e}*1.602176634e-19)/(4.0026*1.66053907e-27))^0.5)*(1.0e10/1.0e12)
+print "He velocity magnitude: ${vtot} A/ps"
+
+### FIX (C): three INDEPENDENT seeds.  Each equal-style variable owns
+#            its own RNG, so reusing one seed made phi, x and y
+#            perfectly correlated.
+variable seed  equal 123+237*${i}
+variable seedX equal ${seed}+7919
+variable seedY equal ${seed}+104729
+
+variable rphi       equal random(0,1,${seed})
+variable rand_angle equal (${rphi}*3.14159265358979*2.0)
+variable r          equal (sin(${theta_rad})*${vtot})
+variable vx         equal (${r}*cos(${rand_angle}))
+variable vy         equal (${r}*sin(${rand_angle}))
+variable vz         equal (0-cos(${theta_rad})*${vtot})
+
+# ---- impact region: central third of the cell in x and y ------------
+### FIX: derived from lx/ly instead of from a stale copy of nx/ny/a
+#        (the old file hard-coded nx=30, ny=18, a=2.918 - none of which
+#        matched the prism cell, and it used the x-width for y as well).
+variable x_lo equal $((xlo+xhi)/2.0-lx/3.0)
+variable x_hi equal $((xlo+xhi)/2.0+lx/3.0)
+variable y_lo equal $((ylo+yhi)/2.0-ly/3.0)
+variable y_hi equal $((ylo+yhi)/2.0+ly/3.0)
+
+# ---- flux bookkeeping (printed once) --------------------------------
+if "${i} == ${istart}" then &
+   "print '# cycle t_cycle_ps t_impact_ps n_He' file cycle_time.dat screen no" &
+   "print 'IMPACT AREA  = $((v_x_hi-v_x_lo)*(v_y_hi-v_y_lo)) A^2   (cell area = $(lx*ly) A^2)'" &
+   "print 'CYCLE TIME   = ${t_cycle} ps'" &
+   "print 'FLUENCE/ion  = $(1.0/((v_x_hi-v_x_lo)*(v_y_hi-v_y_lo)*1.0e-16)) ions/cm^2'" &
+   "print 'EFFECTIVE FLUX (impact area) = $(1.0/((v_x_hi-v_x_lo)*(v_y_hi-v_y_lo)*1.0e-16*v_t_cycle*1.0e-12)) ions/cm^2/s'" &
+   "print 'EFFECTIVE FLUX (whole cell)  = $(1.0/(lx*ly*1.0e-16*v_t_cycle*1.0e-12)) ions/cm^2/s'"
+
+# ---- drift removal BEFORE the projectile exists ---------------------
+velocity latmob zero linear          # integrated lattice atoms only
+velocity still  set 0.0 0.0 0.0 units box   # frozen anchor is truly static
+                                             # ('units box' so it never depends on a
+                                             #  lattice being defined after read_restart)
+
+run 0 post no
+
+variable hex  equal random(${x_lo},${x_hi},${seedX})
+variable hey  equal random(${y_lo},${y_hi},${seedY})
+variable hexx equal ${hex}
+variable heyy equal ${hey}
+variable hezz equal ${zimp}
+print "Adding He at ${hexx} ${heyy} ${hezz}"
+
+# ---- insert and accelerate ONLY the new projectile ------------------
+group he_old type 3                          # snapshot before insertion
+create_atoms 3 single ${hexx} ${heyy} ${hezz} units box
+group he type 3
+group he_new subtract he he_old
+velocity he_new set ${vx} ${vy} ${vz} units box
+
+### FIX (G): ONE mobile group for the whole cycle = upper + all He.
+group mobile     subtract all fixed_layers
+group g_kill_bot dynamic mobile region r_kill_bot every 1
+
+# ---- projectile tracking --------------------------------------------
+compute  cprojke he_new ke
+variable heke   equal c_cprojke
+variable n_proj equal count(he_new)       ### NEW (H): guard for deletion
+variable he_x   equal xcm(he_new,x)
+variable he_y   equal xcm(he_new,y)
+variable he_z   equal xcm(he_new,z)
+
+# ---- sputter detection (energy read BEFORE deletion) ----------------
+compute keatom all ke/atom
+group   killw dynamic w region r_kill_top every 1
+group   killc dynamic c region r_kill_top every 1
+compute ekw killw reduce sum c_keatom
+compute ekc killc reduce sum c_keatom
+
+if "${i} == 1" then &
+   "print '# cycle step time n_W n_C KE_W_eV KE_C_eV' file sputtering.dat screen no" &
+   "print '# cycle netW netC nHe' file sputter_summary.dat screen no"
+
+if "${i} == 1" then "print '# cycle Eloss_elec_eV t_cycle_ps nHe CW_alt CW_deep' file elstop.dat screen no"
+
+reset_timestep 0
+timestep       0.001
+
+### ES: composition-aware electronic stopping (see J in the header).
+#       Defined here (before thermo_style) so f_elstop_a/d can be printed.
+#       Atoms above zsurf (vacuum) get no drag; minneigh stays at 1.
+#       Not stored in the restart - re-created every cycle after 'clear'.
+#       The energy removed is NOT returned as heat; the NVT layer keeps T.
+variable z_alt equal ${zsurf}-${d_alt}
+region r_alt  block INF INF INF INF ${z_alt} ${zsurf} units box
+region r_deep block INF INF INF INF INF ${z_alt} units box
+group  g_alt  region r_alt
+group  g_deep region r_deep
+group  w_alt  intersect g_alt  w
+group  c_alt  intersect g_alt  c
+group  w_deep intersect g_deep w
+group  c_deep intersect g_deep c
+variable cw_alt  equal $(count(c_alt)/count(w_alt))
+variable cw_deep equal $(count(c_deep)/count(w_deep))
+variable nC_alt  equal $(v_cw_alt*v_nW_ref)
+variable nC_deep equal $(v_cw_deep*v_nW_ref)
+print "Cycle ${i}: C/W altered layer = ${cw_alt}   C/W deep = ${cw_deep}"
+
+shell ${pybin} ${elstop_py} table --basis ${elstop_basis} --types W C He --nW ${nW_ref} --nC ${nC_alt}  -o elstop_alt.table  --quiet
+shell ${pybin} ${elstop_py} table --basis ${elstop_basis} --types W C He --nW ${nW_ref} --nC ${nC_deep} -o elstop_deep.table --quiet
+
+fix elstop_a mobile electron/stopping ${ecut} elstop_alt.table  region r_alt
+fix elstop_d mobile electron/stopping ${ecut} elstop_deep.table region r_deep
+
+thermo_style custom step time temp press pe v_he_x v_he_y v_he_z c_cprojke c_ekw c_ekc f_elstop_a f_elstop_d
+thermo       500
+thermo_modify lost warn
+
+run 0 post no
+
+### NEW: bake the cycle start time. reset_timestep's handling of the
+#        elapsed-time accumulator differs between LAMMPS versions, so
+#        every clock below is measured relative to t0 rather than
+#        assuming time == 0 here.
+variable t0 equal $(time)
+
+# ---- optional He trajectory dump (one file per cycle is a lot of
+#      inodes over 10k cycles, so only every he_dump_every-th cycle) --
+variable do_hedump equal (${i}/${he_dump_every}-floor(${i}/${he_dump_every}))==0
+if "${do_hedump} == 1" then &
+   "dump dhe he custom 20 dump.he-traj-${i}.lammps id type x y z vx vy vz" &
+   "dump_modify dhe sort id"
+
+# =====================================================================
+# Integration fixes - ONE set for the entire 20 ps cycle.
+# The adaptive timestep runs the whole way: dt stays tiny while atoms
+# are fast and grows toward 1 fs (Tmax) as the cascade cools.  Jumping
+# to a fixed 1 fs step while the cascade is still hot injects energy.
+# =====================================================================
+fix dtr  mobile dt/reset 5 1e-8 0.001 0.05 units box
+fix fnve mobile nve
+fix fnvt lower  nvt temp ${T} ${T} 0.1
+fix ffrz still  setforce 0.0 0.0 0.0
+
+### ES: f_elstop_a/d are the energies removed since the start of the LATEST run,
+#       and the cycle is many short runs, so it is summed after each one.
+variable eloss_cyc equal 0.0
+
+# =====================================================================
+# PHASE 1 - impact / cascade  (ends on an exit condition or t_impact)
+# =====================================================================
+label impact_loop
+run 100 post no
+variable eloss_cyc equal $(v_eloss_cyc+f_elstop_a+f_elstop_d)            ### ES
+
+# record sputtered atoms that reached the capture plane, then delete
+variable nkw  equal count(killw)
+variable nkc  equal count(killc)
+variable ekwv equal c_ekw
+variable ekcv equal c_ekc
+if "${nkw} > 0 || ${nkc} > 0" then &
+   "print '${i} $(step) $(time) ${nkw} ${nkc} ${ekwv} ${ekcv}' append sputtering.dat screen no"
+delete_atoms group g_kill_top compress no        ### FIX (E)
+
+variable nkbot equal count(g_kill_bot)
+if "${nkbot} > 0" then &
+   "print 'Cycle ${i}: WARNING - ${nkbot} atom(s) removed below z=${zbot_kill} at step $(step)'" &
+   "delete_atoms group g_kill_bot compress no"
+
+variable t_now equal $(time-v_t0)
+
+if "${n_proj} == 0" then &
+   "print 'Cycle ${i}: projectile left the cell at the capture plane'" &
+   "jump SELF impact_done"
+
+if "${he_z} > ${z_esc}" then &
+   "print 'Cycle ${i}: He reflected, back above the launch height z=${he_z}'" &
+   "jump SELF impact_done"
+
+if "${he_z} < ${z_channel}" then &
+   "print 'Cycle ${i}: He reached the thermostat layer at z=${he_z}, KE=${heke}'" &
+   "jump SELF impact_done"
+
+if "${heke} < 0.15" then &
+   "print 'Cycle ${i}: He thermalized, KE=${heke}'" &
+   "jump SELF impact_done"
+
+if "${t_now} < ${t_impact}" then "jump SELF impact_loop"
+
+label impact_done
+variable t_imp_end equal $(time-v_t0)
+
+# =====================================================================
+# PHASE 2 - relaxation, run until the cycle clock reaches t_cycle.
+#
+# Real divertor inter-arrival is ns-us on this cell and unreachable in
+# MD; 20 ps is enough for the cascade to thermalize so impacts do not
+# overlap, and holding it FIXED is what makes the flux comparison
+# across energies and surfaces meaningful.
+# =====================================================================
+
+# remove reflected He sitting above the surface so it cannot peg the
+# adaptive dt (implanted He below the surface is kept - it is material)
+region r_above_surf  block INF INF INF INF ${z_reflect} INF units box
+group  above_surf    region r_above_surf
+group  he_reflected  intersect above_surf he
+delete_atoms group he_reflected compress no
+
+### NEW: the sputter capture plane is now polled during relaxation too.
+#        The old script only recorded and deleted kill-plane crossings
+#        inside the impact loop, which exits as soon as the projectile
+#        thermalizes (often 1-2 ps).  Anything ejected later - thermal
+#        and evaporative ejection, which at 10-50 eV is a large share of
+#        the C yield - crossed the plane during the untended 20 ps
+#        relaxation, was never written to sputtering.dat, and was simply
+#        lost out of the top of the box.  It only ever showed up as a
+#        discrepancy between sputtering.dat and diffc.
+#        Chunks are 200 steps: fix dt/reset caps the fastest atom at
+#        0.05 A/step, so nothing can cross the 18 A capture plane and
+#        leave the box between two polls.
+label relax_loop
+variable t_rem equal $(v_t_cycle-(time-v_t0))
+if "${t_rem} <= 1.0" then "jump SELF relax_fine"
+run 200 post no
+variable eloss_cyc equal $(v_eloss_cyc+f_elstop_a+f_elstop_d)            ### ES
+
+variable nkw  equal count(killw)
+variable nkc  equal count(killc)
+variable ekwv equal c_ekw
+variable ekcv equal c_ekc
+if "${nkw} > 0 || ${nkc} > 0" then &
+   "print '${i} $(step) $(time) ${nkw} ${nkc} ${ekwv} ${ekcv}' append sputtering.dat screen no"
+delete_atoms group g_kill_top compress no
+
+jump SELF relax_loop
+
+# last <=1 ps: the slab is cold, so drop the adaptive dt and land
+# exactly on t_cycle to within one femtosecond
+label relax_fine
+unfix dtr
+timestep 0.001
+variable nfin equal $(round((v_t_cycle-(time-v_t0))/0.001))
+if "${nfin} > 0" then "run ${nfin} post no" "variable eloss_cyc equal $(v_eloss_cyc+f_elstop_a+f_elstop_d)"
+label relax_done
+
+# =====================================================================
+# Per-cycle bookkeeping
+# =====================================================================
+group w  type 1
+group c  type 2
+group he type 3
+
+variable nw_1  equal count(w)
+variable nc_1  equal count(c)
+variable nhe   equal count(he)
+variable diffw equal (${nw0}-${nw_1})
+variable diffc equal (${nc0}-${nc_1})
+variable t_end equal $(time-v_t0)
+
+print "Cycle ${i}: helium in slab = ${nhe}, cycle time = ${t_end} ps (impact phase ${t_imp_end} ps)"
+print "Cycle ${i}: lost W = ${diffw}"
+print "Cycle ${i}: lost C = ${diffc}"
+
+print "${i} ${diffw} ${diffc} ${nhe}"            append sputter_summary.dat screen no
+print "${i} ${t_end} ${t_imp_end} ${nhe}"        append cycle_time.dat     screen no
+print "${i} ${eloss_cyc} ${t_end} ${nhe} ${cw_alt} ${cw_deep}" append elstop.dat screen no   ### ES
+print "Cycle ${i}: energy removed by electronic stopping = ${eloss_cyc} eV"         ### ES
+
+# ---- compact per-cycle snapshots (one frame each, load as a sequence)
+write_dump bulk custom dump.bulk-${i}.lammps id type x y z modify sort id
+write_dump all  custom dump.full-${i}.lammps id type x y z modify sort id
+
+write_restart he_cycle.restart
+### NEW: periodic numbered backup - a job killed mid-write otherwise
+#        leaves a truncated he_cycle.restart and loses the campaign.
+variable do_bak equal (${i}/${bak_every}-floor(${i}/${bak_every}))==0
+if "${do_bak} == 1" then "write_restart he_cycle_${i}.restart"
+
+print "${i}" file last_cycle.txt screen no
+
+if "${do_hedump} == 1" then "undump dhe"
+unfix fnve
+unfix fnvt
+unfix ffrz
+unfix elstop_a                                              ### ES
+unfix elstop_d                                              ### ES
+
+next i
+jump SELF loop_implant
