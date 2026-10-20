@@ -1,0 +1,292 @@
+# =====================================================================
+# W CIM REPLICA deck  (in_W_CIM_rep.step2)
+#
+# Identical physics to in_W_CIM_092926.  Only these changes, marked ### REP:
+#   1. -var rep N        : replica number, added to all three random seeds,
+#                          so replicas restarted from the same checkpoint
+#                          draw different He positions and azimuths.
+#   2. -var dump_every N : dump.bulk/full only every N cycles.
+#   3. 'jump SELF' replaces the old 'jump in.step2', so the file name is free.
+#      Run with -in (never "lmp < file").
+#   4. this header.
+#
+# Random numbers: random() in equal-style variables uses ONE generator per
+# LAMMPS run, seeded by the FIRST random() call (here seedphi at cycle
+# istart); later seed arguments are ignored and 'clear' does not reset it
+# (checked in variable.cpp, 29Oct2020 and 29Sep2021).  So rep has to enter
+# the seed of the first cycle of each job, which it does.
+#
+# Branch from a checkpoint, 100 cycles, replica 3 (setup_replicas.sh
+# writes exactly these lines into args.txt):
+#   cycle 0  : lmp -in in_W_CIM_rep.step2 -var Eion 100 -var rep 3 -var istart 1   -var nend 100 -var dump_every 50
+#   cycle 500: cp he_cycle_500.restart he_cycle.restart
+#              lmp -in in_W_CIM_rep.step2 -var Eion 100 -var rep 503 -var istart 501 -var nend 600 -var dump_every 50
+# =====================================================================
+# Pure W, continuous impact model (CIM).  LAMMPS 29Oct2020.
+# No line continuations, no if/else.
+#
+# Difference from your in_W.step2: that one re-reads the restart every
+# iteration, so each impact hits a pristine slab (SIM).  This one carries
+# the slab over, accumulates implanted He, and holds the insertion-to-
+# insertion interval fixed at t_cycle so the flux is defined.
+#
+# Needs w0.restart from in_W001.step1 / in_W110.step1, plus
+# dump.bulk-0.lammps and dump.full-0.lammps in the same directory.
+#
+# NOTE for the OVITO script: He is type 2 here, not type 3.
+#
+# Files carried between cycles (and between SLURM jobs):
+#   he_cycle.restart       slab + all implanted He after the last finished cycle
+#   last_cycle.txt         number of that cycle (resume anchor for run_W.slurm)
+#   he_cycle_<N>.restart   permanent save state every ckpt_every cycles (500)
+#   dump.bulk-<i> / dump.full-<i>, sputtering.dat, sputter_summary.dat,
+#   cycle_time.dat         one entry per cycle, keyed by the cycle number
+#
+# Must be run with -in (not "lmp < file") so the jump SELF lines resolve.
+# The file name no longer matters.
+#
+# Run:  lmp -in in_W.step2 -var Eion 100
+#       lmp -in in_W.step2 -var Eion 100 -var istart 501    (resume)
+# Normally run_W.slurm passes istart and nend for you.
+
+variable istart     index 1
+variable nend       index 10000
+variable ckpt_every index 500       # cycles between permanent save states
+variable Eion      index 100        # eV
+variable theta_deg index 30.0       # from surface normal
+variable Tsub      index 739        # K
+variable t_cycle   index 20.0       # ps, insertion to next insertion
+variable t_impact  index 10.0       # ps, cap on the cascade phase
+variable standoff  index 10.0       # A above the surface, insertion height
+variable dist_cut  index 5.5        # A above the surface, sputter cut
+variable settle_ke index 0.2        # eV, He counts as thermalized
+variable rep        index 0          ### REP: replica number (0 = main run)
+variable dump_every index 1          ### REP: write dump.bulk/full every Nth cycle
+
+variable i loop ${istart} ${nend}
+label loop_start
+
+print "##### cycle ${i} #####"
+
+clear
+
+units           metal
+dimension       3
+atom_style      atomic
+atom_modify     map array
+
+if "${i} == 1" then "read_restart w0.restart"
+if "${i} > 1" then "read_restart he_cycle.restart"
+
+change_box      all boundary p p f
+
+mass            1 183.85
+mass            2 4.0026
+
+group           w  type 1
+group           he type 2
+group           fixed_layers union lower still
+group           latmob subtract w still
+variable        nw0 equal $(count(w))
+
+neighbor        2.0 bin
+neigh_modify    once no every 1 delay 0 check yes
+
+# Must match whichever pair block you used in step 1.
+pair_style      hybrid eam/fs table linear 10000
+pair_coeff      * * eam/fs w_eam4.fs W NULL
+pair_coeff      1 2 table WHe.table WHe
+pair_coeff      2 2 table HeHe.table HeHe
+
+# Planes follow the receding surface.  In a SIM zsurf is constant because
+# every impact re-reads the same restart; here it moves.
+variable        zsurf equal $(bound(w,zmax))
+variable        zimp  equal ${zsurf}+${standoff}
+variable        zcut  equal ${zsurf}+${dist_cut}
+variable        zrefl equal ${zsurf}+2.0
+variable        zkill equal ${zsurf}+22.0
+variable        zbot  equal $(zlo+3.0)
+print           "cycle ${i}: zsurf=${zsurf} zinsert=${zimp} zcut=${zcut}"
+
+region          r_kill_top block INF INF INF INF ${zkill} INF units box
+region          r_kill_bot block INF INF INF INF INF ${zbot} units box
+group           g_kill_top dynamic all region r_kill_top every 1
+
+variable        theta equal ${theta_deg}*3.141592653589793/180.0
+variable        vtot  equal sqrt(2.0*${Eion}*9648.533/4.0026)
+
+variable        seedx   equal 10007+97*${i}+100003*${rep}      ### REP
+variable        seedy   equal 20011+131*${i}+100003*${rep}     ### REP
+variable        seedphi equal 30013+173*${i}+100003*${rep}     ### REP (first draw of a job: seeds the stream)
+
+# freeze phi to a number so cos and sin see the same angle
+variable        phi equal random(0.0,6.283185307179586,${seedphi})
+variable        phi equal ${phi}
+
+variable        vxy   equal sin(${theta})*${vtot}
+variable        vx_he equal ${vxy}*cos(${phi})
+variable        vy_he equal ${vxy}*sin(${phi})
+variable        vz_he equal -cos(${theta})*${vtot}
+
+# impact region: central two thirds of the cell, same as the WC runs
+variable        x_lo equal $((xlo+xhi)/2.0-lx/3.0)
+variable        x_hi equal $((xlo+xhi)/2.0+lx/3.0)
+variable        y_lo equal $((ylo+yhi)/2.0-ly/3.0)
+variable        y_hi equal $((ylo+yhi)/2.0+ly/3.0)
+variable        A_imp equal $((v_x_hi-v_x_lo)*(v_y_hi-v_y_lo))
+variable        flux  equal $(1.0/(v_A_imp*1.0e-16*v_t_cycle*1.0e-12))
+
+if "${i} == 1" then "print '# cycle step time nW KE_W_eV' file sputtering.dat screen no"
+if "${i} == 1" then "print '# cycle netW netC nHe' file sputter_summary.dat screen no"
+if "${i} == 1" then "print '# cycle t_cycle_ps t_cascade_ps nHe' file cycle_time.dat screen no"
+if "${i} == 1" then "print 'impact area ${A_imp} A^2, cycle ${t_cycle} ps, flux ${flux} ions/cm^2/s'"
+
+velocity        latmob zero linear
+velocity        still set 0.0 0.0 0.0
+
+run             0 post no
+
+variable        xhe equal random(${x_lo},${x_hi},${seedx})
+variable        yhe equal random(${y_lo},${y_hi},${seedy})
+variable        xhe equal ${xhe}
+variable        yhe equal ${yhe}
+
+group           he_old type 2
+create_atoms    2 single ${xhe} ${yhe} ${zimp} units box
+group           he type 2
+group           he_new subtract he he_old
+velocity        he_new set ${vx_he} ${vy_he} ${vz_he} units box
+
+group           mobile subtract all fixed_layers
+group           g_kill_bot dynamic mobile region r_kill_bot every 1
+
+compute         cke he_new ke
+variable        HeKE  equal c_cke
+variable        nproj equal count(he_new)
+variable        HeZ   equal xcm(he_new,z)
+
+# sputtered = above the cut AND moving away.  dist_cut (5.5 A) matches the
+# EAM cutoff, so an atom flagged there is no longer bound to the surface
+# and cannot be pulled back even with vz > 0.
+compute         keW w ke/atom
+variable        sputD atom "z > v_zcut && vz > 0.0"
+group           sputtered dynamic w var sputD every 1
+variable        kePer atom "v_sputD*c_keW"
+compute         keSput w reduce sum v_kePer
+variable        n_now  equal count(sputtered)
+variable        ke_now equal c_keSput
+
+variable        n_del  equal 0
+variable        ke_del equal 0.0
+
+reset_timestep  0
+timestep        0.001
+
+compute         Tslab upper temp
+thermo          500
+thermo_style    custom step time c_Tslab pe etotal v_HeZ v_HeKE c_keSput
+thermo_modify   temp Tslab lost warn
+
+run             0 post no
+variable        t0 equal $(time)
+
+# one fix set for the whole cycle; the adaptive dt runs the whole way
+fix             dtr  mobile dt/reset 5 1.0e-8 0.001 0.05 units box
+fix             fnve mobile nve
+fix             fnvt lower nvt temp ${Tsub} ${Tsub} 0.1
+fix             ffrz still setforce 0.0 0.0 0.0
+
+# --- cascade phase ------------------------------------------------------
+label cascade
+run             100 post no
+
+variable        n_i  equal ${n_now}
+variable        ke_i equal ${ke_now}
+if "${n_i} > 0" then "print '${i} $(step) $(time) ${n_i} ${ke_i}' append sputtering.dat screen no"
+if "${n_i} > 0" then "delete_atoms group sputtered compress no"
+variable        n_del  equal ${n_del}+${n_i}
+variable        ke_del equal ${ke_del}+${ke_i}
+
+delete_atoms    group g_kill_top compress no
+variable        nb equal count(g_kill_bot)
+if "${nb} > 0" then "print 'cycle ${i}: WARNING ${nb} atom(s) below z=${zbot}, slab may be too thin'"
+if "${nb} > 0" then "delete_atoms group g_kill_bot compress no"
+
+variable        tnow equal $(time-v_t0)
+if "${nproj} == 0" then "jump SELF cascade_done"
+if "${HeZ} > ${zimp}" then "jump SELF cascade_done"
+if "${HeKE} < ${settle_ke}" then "jump SELF cascade_done"
+if "${tnow} < ${t_impact}" then "jump SELF cascade"
+
+label cascade_done
+variable        t_casc equal $(time-v_t0)
+
+# --- relaxation to the fixed cycle clock --------------------------------
+# Sputter detection keeps running here.  The cascade phase exits as soon
+# as the projectile thermalizes, often in 1-2 ps, and thermal ejection
+# continues well after that.
+
+region          r_above block INF INF INF INF ${zrefl} INF units box
+group           above region r_above
+group           he_refl intersect above he
+delete_atoms    group he_refl compress no
+
+label relax
+variable        trem equal $(v_t_cycle-(time-v_t0))
+if "${trem} <= 1.0" then "jump SELF relax_end"
+run             200 post no
+
+variable        n_i  equal ${n_now}
+variable        ke_i equal ${ke_now}
+if "${n_i} > 0" then "print '${i} $(step) $(time) ${n_i} ${ke_i}' append sputtering.dat screen no"
+if "${n_i} > 0" then "delete_atoms group sputtered compress no"
+variable        n_del  equal ${n_del}+${n_i}
+variable        ke_del equal ${ke_del}+${ke_i}
+delete_atoms    group g_kill_top compress no
+jump SELF relax
+
+# last <= 1 ps: slab is cold, drop the adaptive dt and land exactly on
+# t_cycle to within a femtosecond
+label relax_end
+unfix           dtr
+timestep        0.001
+variable        nfin equal $(floor((v_t_cycle-(time-v_t0))/0.001+0.5))
+if "${nfin} > 0" then "run ${nfin} post no"
+
+# --- bookkeeping --------------------------------------------------------
+group           w  type 1
+group           he type 2
+variable        nw1   equal $(count(w))
+variable        nhe1  equal $(count(he))
+variable        diffw equal ${nw0}-${nw1}
+variable        tend  equal $(time-v_t0)
+
+print "cycle ${i}: sputtered W ${n_del} (net ${diffw}), KE off ${ke_del} eV, He in slab ${nhe1}, t ${tend} ps"
+print "${i} ${diffw} 0 ${nhe1}" append sputter_summary.dat screen no
+print "${i} ${tend} ${t_casc} ${nhe1}" append cycle_time.dat screen no
+
+### REP: dumps only every dump_every cycles
+variable        do_dump equal (${i}/${dump_every}-floor(${i}/${dump_every}))==0
+if "${do_dump} == 1" then "write_dump w custom dump.bulk-${i}.lammps id type x y z modify sort id" "write_dump all custom dump.full-${i}.lammps id type x y z modify sort id"
+
+# Carry-over state.  Written to a temp name and renamed, so a wall-time
+# kill in the middle of the write can never leave a half-written
+# he_cycle.restart for the next job to read.  last_cycle.txt is written
+# last, so it only ever names a cycle whose restart is complete.
+write_restart   he_cycle.restart.tmp
+shell           mv he_cycle.restart.tmp he_cycle.restart
+print "${i}" file last_cycle.txt screen no
+
+# Permanent save state every ckpt_every cycles (he_cycle_500.restart,
+# he_cycle_1000.restart, ...).  Never overwritten, so you can roll the
+# campaign back to any of them (see run_W.slurm header).
+variable        ck equal ${i}%${ckpt_every}
+if "${ck} == 0" then "write_restart he_cycle_${i}.restart"
+if "${ck} == 0" then "print 'cycle ${i}: save state he_cycle_${i}.restart written'"
+
+unfix           fnve
+unfix           fnvt
+unfix           ffrz
+
+next i
+jump SELF loop_start
