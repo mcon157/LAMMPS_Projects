@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
-"""
-rand_schematics.py - figures explaining the random-orientation SIM set-up
-(in_rand_W.step1 / in_rand_WC.step1).
+"""rand_schematics.py - figures of the random-orientation SIM set-up.
 
-The geometry is rebuilt here with the same maths as the LAMMPS decks
-(lattice + origin shift -> rotate about the centre by Rz(gamma), Rx(beta),
-Rz(alpha) -> keep r <= R and z <= 0).  Atoms are NOT relaxed, which is fine
-for a schematic.  The Euler angles come from the decks' own random stream
-(python LAMMPS module, if installed) so the plotted orientations are the
-ones the runs will use; otherwise numpy draws are used and the figure says so.
+Rebuilds the geometry with the decks' maths (lattice + origin shift -> rotate by
+Rz(alpha) Rx(beta) Rz(gamma) -> keep r <= R, z <= 0; unrelaxed).  Euler angles
+come from the decks' random stream (LAMMPS python module if installed, else
+numpy draws, flagged in the figure).
 
 Outputs:
-  rand_steps_WC.png        (a) crystal ball, (b) random rotation, (c) hemisphere cut
-  rand_crosssection_WC.png cross-section of the R = 50 A hemisphere: layers + impact geometry
-  rand_orientations.png    surface normals of surfaces 1..N in the crystal frame:
-                           cubic IPF for W, hexagonal IPF for WC
-  rand_example_surfaces.png top views of three random WC surfaces, coloured by height
-  rand_orientations_vertical.png  same as rand_orientations.png, stacked (slide column)
-  rand_steps_WC_slide.png   compact version of rand_steps_WC.png for a slide
-See also rand_surface_views.py (regular vs random) and rand_orientation_gif.py (GIF).
+  rand_steps_WC.png / _slide.png   (a) crystal ball, (b) rotation, (c) hemisphere cut
+  rand_crosssection_WC.png         layers and impact geometry of the R = 50 A hemisphere
+  rand_orientations.png / _vertical.png   surface normals on the IPF (W cubic, WC hexagonal)
+  rand_example_surfaces.png        top views of three random WC surfaces
 
-Usage:  python rand_schematics.py [--n 50] [--out .]
+    python rand_schematics.py [--n 50] [--out .]
 """
 import argparse
 import os

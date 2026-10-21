@@ -1,0 +1,14 @@
+# analysis and plotting scripts (Python 3.6+)
+numpy
+matplotlib
+pandas
+scipy
+pillow
+# OVITO scripts: post_processing/ovito_insertion_movies.py, He_BE/scripts/renders.py, render_dump.py
+ovito
+# notebooks, and tools/build_notebooks.py
+jupyter
+nbformat
+nbclient
+ipykernel
+# optional: pysrim (elstop.py --backend srim, needs SRIM); the LAMMPS Python module (rand_geom.py, else the CSV is used)

@@ -1,47 +1,27 @@
 #!/usr/bin/env python3
-"""
-elstop.py - electronic stopping tables for LAMMPS 'fix electron/stopping'
-             (W / C / He, extendable), built from a reusable BASIS of
-             per-element stopping cross sections.
+"""elstop.py - electronic stopping tables for LAMMPS 'fix electron/stopping'
+(W / C / He, extendable) from a reusable BASIS of per-element cross sections.
 
-WHY A BASIS
-  Bragg's rule: the stopping power of projectile p in any W-C mixture is
-      S_p(E) = n_W * sigma_p@W(E) + n_C * sigma_p@C(E)        [eV/A]
-  with sigma in eV*A^2 and n in atoms/A^3.  So SRIM (or RustBCA's model)
-  only has to be run ONCE, for each projectile in each PURE element.
-  Every composition afterwards - pure W, 50/50 WC, or whatever the
-  surface has turned into after N impacts - is a millisecond linear
-  combination.  That is what makes a per-impact update cheap.
+Bragg's rule: for projectile p in any W-C mixture
+    S_p(E) = n_W * sigma_p@W(E) + n_C * sigma_p@C(E)     [eV/A]
+(sigma in eV*A^2, n in atoms/A^3), so SRIM or the RustBCA model runs once per
+projectile in each pure element; any composition is then a fast sum.
 
-SUBCOMMANDS
-  basis   compute sigma_p@t(E) on a log grid (default 10-1000 eV)
-            --backend srim     pysrim -> SRIM SR module (needs SRIM + wine)
-            --backend srimfile parse SR text files you ran yourself
-                               (e.g. SRIM GUI on Windows), units eV/Angstrom
-            --backend rustbca  RustBCA's electronic-stopping model,
-                               transcribed from RustBCA src/material.rs
-                               (its Python API exposes no stopping function)
-  table   write one LAMMPS table from a basis for a given composition
-  grid    write a family of tables over C/W ratio (fallback if 'shell'
-          is not allowed on your cluster's compute nodes)
+Subcommands
+  basis   sigma_p@t(E) on a log grid (default 10-1000 eV)
+            --backend srim      pysrim -> SRIM SR module (SRIM + wine)
+            --backend srimfile  SR text files you made (e.g. SRIM GUI), eV/A
+            --backend rustbca   RustBCA's electronic-stopping model (transcribed)
+  table   one LAMMPS table from a basis for a composition
+  grid    a family of tables over C/W (if 'shell' is not allowed on compute nodes)
 
-EXAMPLES
-  # basis from SRIM through pysrim (one-off, ~1 min)
-  xvfb-run -a python3 elstop.py basis --backend srim --srim-dir $HOME/srim -o basis_srim.dat
-  # basis from SR files made on Windows: name each file  <proj>@<target>
-  python3 elstop.py basis --backend srimfile --srim-file He@W "He in W.txt" \\
-          --srim-file He@C "He in C.txt" ... -o basis_srim.dat
-  # basis from RustBCA's model (Lindhard-Scharff x Ck, Biersack-Varelas)
+Examples
   python3 elstop.py basis --backend rustbca -o basis_rustbca.dat
+  python3 elstop.py basis --backend srimfile --srim-file He@W "He in W.txt" --srim-file He@C "He in C.txt" -o basis_srim.dat
+  python3 elstop.py table --basis basis_rustbca.dat --types W C He --target W:0.5,C:0.5 --rho 15.63 -o elstop_WC.table
+  python3 elstop.py table --basis basis_rustbca.dat --types W C He --nW 0.04806 --nC 0.031 -o elstop_alt.table
 
-  # static tables
-  python3 elstop.py table --basis basis_srim.dat --types W He   --target W:1         --rho 19.25 -o elstop_W.table
-  python3 elstop.py table --basis basis_srim.dat --types W C He --target W:0.5,C:0.5 --rho 15.63 -o elstop_WC.table
-  # explicit number densities (what the per-cycle LAMMPS deck calls)
-  python3 elstop.py table --basis basis_srim.dat --types W C He --nW 0.04806 --nC 0.031 -o elstop_alt.table
-
-Pure Python 3.6+, no numpy needed for 'table'/'grid' (fast enough to call
-every MD cycle).  'basis --backend srim' needs pysrim.
+Python 3.6+; 'table' and 'grid' need no numpy (fast enough every MD cycle).
 """
 import argparse
 import math
@@ -61,14 +41,11 @@ ELEMENTS = {
 AVOGADRO = 6.02214076e23
 
 # ---------------------------------------------------------------------------
-# RustBCA model, transcribed from lcpp-org/RustBCA src/material.rs + consts.rs
-#   S_low  = LS_PREFACTOR * Za^(7/6) Zb / (Za^(2/3)+Zb^(2/3))^(3/2) * sqrt(E/Ma)
-#            LINDHARD_SCHARFF_PREFACTOR = 1.212*ANGSTROM^2*Q  -> 1.212 eV*A^2, E[eV], Ma[amu]
-#   S_high = BETHE_BLOCH_PREFACTOR * Zb Za^2 / beta^2 * ln(eb + 1 + B/eb)
-#            eb = 2 me v^2 / I ;  I = Zb*I0,  I0 = 12+7/Zb (Zb<13) else 9.76+58.5 Zb^-1.19 eV
-#            B  = 100 Za/Zb (Zb<3) else 5
-#   INTERPOLATED (RustBCA default): S = 1/(1/S_high + 1/(S_low*ck))
-#   LOW_ENERGY_NONLOCAL:            S = S_low*ck
+# RustBCA model (from RustBCA src/material.rs, consts.rs):
+#   S_low  = 1.212 eV*A^2 * Za^(7/6) Zb / (Za^(2/3)+Zb^(2/3))^(3/2) * sqrt(E/Ma)   [E eV, Ma amu]
+#   S_high = Bethe-Bloch: Zb Za^2 / beta^2 * ln(eb + 1 + B/eb), eb = 2 me v^2 / I,
+#            I = Zb*I0, I0 = 12+7/Zb (Zb<13) else 9.76+58.5 Zb^-1.19 eV, B = 100 Za/Zb (Zb<3) else 5
+#   INTERPOLATED (default): S = 1/(1/S_high + 1/(S_low*ck))      LOW_ENERGY_NONLOCAL: S = S_low*ck
 # ---------------------------------------------------------------------------
 E2 = 14.3996454784          # e^2/(4 pi eps0) in eV*A
 MEC2 = 510998.95            # electron rest energy, eV

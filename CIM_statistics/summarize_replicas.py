@@ -1,35 +1,20 @@
 #!/usr/bin/env python3
-"""
-summarize_replicas.py - replica statistics for every run folder.
+"""summarize_replicas.py - replica statistics for every run folder.
 
-    python3 summarize_replicas.py                 # all folders in runs/
-    python3 summarize_replicas.py runs/WC_basal_C_50eV runs/W001_100eV
-    python3 summarize_replicas.py --include-incomplete
+    python3 summarize_replicas.py [runs/WC_basal_C_50eV ...] [--include-incomplete]
 
-For each run folder (e.g. runs/WC_basal_C_50eV) it reads the seed folders
-seed_b<branch>_s<seed>/ made by setup_replicas.sh, adds up the atoms in
-each seed's sputtering.dat over the cycles it ran (cycle_time.dat), and
-writes INTO THE RUN FOLDER:
-
-    replica_yields.csv    one row per seed: cycles done, W and C sputtered,
-                          yields, complete yes/no, cycle-clock check
-    replica_summary.csv   one row per save point (branch): number of
-                          complete seeds, mean yield, SD, SEM, 95 % CI
-                          (Student t), dispersion (var/mean of the counts;
-                          1 = Poisson, > 1 = bursty), seeds needed for a
-                          10 % SEM, pooled W yield with a 95 % upper limit
-    replica_yields.png    yield of each seed and mean +- 95 % CI vs fluence
-                          (only if matplotlib is installed)
-
-and runs/all_replica_summary.csv with the summary rows of every run.
-
-Statistics are on the C yield for WC and on the W yield for pure W.  W
-from WC is reported pooled (a few atoms per seed).  Only complete seeds
-(all planned cycles in cycle_time.dat) enter the statistics unless
---include-incomplete is given.  Needs python3 + numpy; matplotlib optional.
-
-sputtering.dat columns:  WC  cycle step time n_W n_C KE_W KE_C
-                         W   cycle step time n_W KE_W
+Reads the seed folders seed_b<branch>_s<seed>/ of each run folder, sums the
+atoms in each seed's sputtering.dat over the cycles it ran, and writes into
+the run folder:
+    replica_yields.csv    per seed: cycles, W and C sputtered, yields, complete,
+                          cycle-clock check
+    replica_summary.csv   per save point: seeds, mean yield, SD, SEM, 95 % CI
+                          (Student t), dispersion (var/mean; 1 = Poisson),
+                          seeds for a 10 % SEM, pooled W yield + 95 % upper limit
+    replica_yields.png    per-seed yields and mean +- 95 % CI vs fluence
+plus runs/all_replica_summary.csv.  Statistics use the C yield for WC and the W
+yield for pure W; only complete seeds count unless --include-incomplete.
+Needs numpy; matplotlib optional.
 """
 import argparse
 import csv

@@ -1,49 +1,24 @@
 #!/bin/bash
 # =====================================================================
-# setup_replicas.sh - create one folder per seed inside each run folder.
-#
-# Expected layout (run everything from the CIM_replicas folder):
+# setup_replicas.sh - one folder per seed inside each run folder.
 #
 #   CIM_replicas/
-#     potentials/            WCH.tersoff WHe.table CHe.table HeHe.table w_eam4.fs
-#     runs/
-#       WC_basal_C_50eV/     wche0.restart  he_cycle_500.restart  he_cycle_1000.restart
-#       W001_100eV/          w0.restart     he_cycle_500.restart ...
-#     in_CIM_rep.step2  in_W_CIM_rep.step2
-#     setup_replicas.sh  run_replicas.slurm  summarize.slurm  submit_all.sh
-#     summarize_replicas.py
+#     potentials/         WCH.tersoff WHe.table CHe.table HeHe.table w_eam4.fs
+#     runs/WC_basal_C_50eV/   wche0.restart he_cycle_500.restart ...  (WC)
+#     runs/W001_100eV/        w0.restart    he_cycle_500.restart ...  (W)
+#     in_CIM_rep.step2  in_W_CIM_rep.step2  and the scripts
 #
-# The material comes from the cycle-0 restart in the run folder
-# (wche0.restart = WC, w0.restart = W), the energy from the folder name
-# (..._<E>eV).  For every save point present (0 = the cycle-0 restart,
-# 500 = he_cycle_500.restart, ...) it makes NSEED folders:
+# Material from the cycle-0 restart, energy from the folder name (_<E>eV).
+# For each save point present (0, 500 = he_cycle_500.restart, ...) it makes
+# NSEED folders  seed_b<branch>_s<seed>/  (potentials, deck, restart,
+# args.txt); LAMMPS gets rep = branch + seed.  Existing seed folders are
+# left alone (re-run with a larger -n to add seeds).
 #
-#   runs/WC_basal_C_50eV/seed_b0000_s01/   cycles    1-100
-#   runs/WC_basal_C_50eV/seed_b0500_s01/   cycles  501-600
-#   runs/WC_basal_C_50eV/seed_b1000_s01/   cycles 1001-1100
-#
-# each holding the potentials, the input file, its restart and args.txt.
-# The seed number entering LAMMPS is rep = branch + s, unique in a run
-# folder (the main run is rep 0).
-#
-# Usage:
-#   ./setup_replicas.sh                       # every folder in runs/
-#   ./setup_replicas.sh runs/WC_basal_C_50eV  # only these folders
-#   ./setup_replicas.sh -n 20 -c 100 -b "0 500" runs/WC_basal_W_100eV
-#
-# Options:  -n seeds per save point (default 10, max 99)
-#           -c cycles per seed       (default 100)
-#           -b save points to use    (default "0 500 1000"; missing ones are skipped)
-#           -d dump every N cycles   (default 50)
-#           -x "extra LAMMPS args" appended to every args.txt
-#              (e.g. -x "-var Tsub 739"; must match the main run)
-#           -f rebuild seed folders that already exist (overwrites their
-#              restart - only before they have run)
-#
-# Existing seed folders are never touched (unless -f), so re-running with
-# a larger -n only adds seeds.  It ends by listing, for every run folder,
-# the seeds that have not been submitted or started yet; submit_all.sh
-# submits exactly those.
+#   ./setup_replicas.sh [options] [run folders]      default: all of runs/
+#     -n seeds per save point (10, max 99)   -c cycles per seed (100)
+#     -b save points ("0 500 1000")           -d dump every N cycles (50)
+#     -x "extra LAMMPS args" (must match the main run)
+#     -f rebuild existing seed folders (only before they have run)
 # =====================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -54,7 +29,7 @@ while getopts "n:c:b:d:x:f" opt; do
   case $opt in
     n) NSEED=$OPTARG ;; c) NCYC=$OPTARG ;; b) BRANCHES=$OPTARG ;;
     d) DUMP_EVERY=$OPTARG ;; x) EXTRA=$OPTARG ;; f) FORCE=1 ;;
-    *) sed -n '2,45p' "$0"; exit 1 ;;
+    *) sed -n '2,22p' "$0"; exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -107,8 +82,7 @@ for RUN in "${RUNS[@]}"; do
   done
 done
 
-# Report what is waiting to run, over ALL run folders (not only the ones
-# named in this call).  submit_all.sh finds the same seeds by itself.
+# Seeds waiting to run, over all run folders (submit_all.sh finds the same).
 echo "$TOTAL seed folder(s) created now.  Waiting to run (never submitted, never started):"
 NWAIT=0
 for RUN in runs/*/; do

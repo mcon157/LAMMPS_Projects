@@ -1,3 +1,7 @@
+# Bulk WC at temperature T (NPT, x and y coupled): average a and c, and the
+# thermal expansion relative to a0, c0 at T0.  Appends to
+# thermal_expansion_summary.dat (the slab decks use a, c at 614.6 K).
+# Set T below (equal-style, so not -var), then:  lmp -in in.step1
 
 clear
 units           metal

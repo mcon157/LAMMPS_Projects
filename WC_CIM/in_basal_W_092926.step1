@@ -1,32 +1,21 @@
-# WC slab, basal (0001) surface, TUNGSTEN-TERMINATED.  Writes wche0.restart for in.step2.
-# LAMMPS 29Oct2020.  No line continuations, no if/else, no loops.
-#
-# Fixes vs. your original:
-#   - boundary p p f was missing (it ran p p p, and read_restart in step 2
-#     overwrites the p p f that step 2 sets before it)
-#   - dropped the 'zbl 0.8 1.4' sub-style and 'pair_coeff 2 3 zbl 6 2',
-#     which double-counted the C-He repulsion on top of CHe.table
-#   - lattice constants now identical to in_prism.step1
-#   - added Stage B: equilibration under the same NVE/NVT split step 2
-#     uses, which your original never ran
-#   - writes a cycle-0 baseline dump so surface regression is referenced
-#     to the equilibrated surface instead of to cycle 1
+# WC slab, basal (0001), W-terminated.  Writes wche0.restart for step 2,
+# plus dump.bulk-0 / dump.full-0 (cycle-0 baseline for surface regression).
+# LAMMPS 29Oct2020; no line continuations, no if/else, no loops.
+# Stage A equilibrates (NVT), Stage B uses the same NVE/NVT split as step 2.
 
 variable T        equal 614.6
 variable seed     equal 1008
 variable t_stageA equal 200      # ps, NVT on the whole mobile slab
-variable t_stageB equal 500      # ps, NVE upper + NVT lower (same as step 2)
-                                 # sweep: rerun with 10, 50, 200, 1000, 5000
+variable t_stageB equal 500      # ps, NVE upper + NVT lower (as in step 2)
+                                 # sweep e.g. 10, 50, 200, 1000, 5000
 
 units           metal
 dimension       3
 atom_style      atomic
 boundary        p p f
 
-# Lattice constants at T.  KEEP THESE IDENTICAL IN in_prism.step1 - your
-# prism file used a = 2.92329, c = 2.81805, a 0.2% different cell for the
-# same material at the same temperature.  Both should come from a bulk
-# NPT run with WCH.tersoff at T; check pxx/pyy below, they should be ~0.
+# Lattice constants at T (bulk NPT with WCH.tersoff; same in all WC slabs).
+# pxx/pyy below should be ~0.
 variable a    equal 2.92949147531862
 variable c    equal 2.82420965326672
 variable clat equal ${c}/${a}
@@ -36,17 +25,12 @@ variable p16  equal 1.0/6.0
 
 lattice custom ${a} a1 1.0 0 0 a2 0 ${blat} 0 a3 0 0 ${clat} basis 0.0 0.0 0.0 basis 0.5 0.5 0.0 basis 0.0 ${p23} 0.5 basis 0.5 ${p16} 0.5
 
-# z bounds in lattice units of c = 2.8242 A.  Basal planes alternate
-# W, C, W, C at a UNIFORM c/2 = 1.412 A spacing, so both terminations
-# cleave the same set of W-C bonds and both are equally natural - which
-# is why Traskelin 2007 treats (0001)-C and (0001)-W as a matched pair.
-# 29.25 -> top plane is the W plane at 29.0c = 81.90 A  (W-terminated)
-# 29.8  -> top plane is the C plane at 29.5c = 83.31 A  (C-terminated)
-# Any value in (29.0, 29.5) gives the W termination.
-# NOTE: with the bottom still at z=0 (a W plane) this slab has 30 W
-# planes and 29 C planes, i.e. ~1.7% excess W, all of it inside the
-# frozen anchor.  Irrelevant for yields; matters only if you report
-# absolute surface composition vs fluence.
+# z bounds in units of c = 2.8242 A.  Basal planes alternate W, C at c/2,
+# so both terminations cut the same bonds (cf. Traskelin 2007).
+# 29.25 -> top plane is W at 29.0c = 81.90 A (W-terminated; any value in 29.0-29.5)
+# 29.8  -> top plane is C at 29.5c = 83.31 A (C-terminated)
+# With the bottom at a W plane this slab has 30 W and 29 C planes (~1.7 %
+# excess W, all in the frozen anchor).
 region          box  block 0 30 0 18 -3 40
 region          mbox block 0 30 0 18 0 29.25
 create_box      3 box
@@ -71,11 +55,8 @@ mass            1 183.85
 mass            2 12.011
 mass            3 4.0026
 
-# tersoff/zbl already carries the ZBL wall for W-W, W-C and C-C, and the
-# He interactions come entirely from the tables.  No separate zbl
-# sub-style.  If the tables turn out to have NO short-range wall (check:
-# head CHe.table - if r starts near 0.1-0.5 A with keV energies it is
-# there), add ZBL back for ALL THREE He pairs, never just 2 3.
+# tersoff/zbl carries the ZBL wall for W-W, W-C, C-C; He pairs come from the
+# tables only (no separate zbl: it would double-count C-He).
 pair_style      hybrid/overlay tersoff/zbl table linear 10000
 pair_coeff      * * tersoff/zbl WCH.tersoff W C NULL
 pair_coeff      1 3 table WHe.table WHe
@@ -86,8 +67,7 @@ neighbor        2.0 bin
 neigh_modify    every 1 delay 0 check yes
 timestep        0.001
 
-# Mean height of the top atomic plane.  Watch surf_z_stageB.dat: it must
-# be flat before this restart is used.  Window 1.2 A < c/2 = 1.412 A.
+# Top-plane height (window 1.2 A < c/2): surf_z_stageB.dat must be flat.
 run             0 post no
 variable        ztop0 equal $(bound(all,zmax))
 variable        zwin  equal ${ztop0}-1.2
@@ -118,11 +98,7 @@ run             ${nA}
 unfix           avzA
 unfix           nvtA
 
-# --- Stage B: same integration split step 2 uses ------------------------
-# NVE on 'upper', NVT only on 'lower'.  Your original thermostatted the
-# whole mobile slab, so the surface first met its production dynamics
-# during the impact cycles - the suspected source of the first-cycle
-# regression jump.  Rerun with different t_stageB to sweep it.
+# --- Stage B: NVE upper + NVT lower, as in step 2 (rerun with other t_stageB to sweep)
 fix             nveB upper nve
 fix             nvtB lower nvt temp ${T} ${T} 0.1
 fix             avzB all ave/time 100 10 1000 c_zt file surf_z_stageB.dat

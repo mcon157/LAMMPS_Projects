@@ -1,16 +1,13 @@
 #!/bin/bash
-# One random surface per array task: build it (step 1), then fire NIMP He
-# at it for every energy (step 2).  The array index IS the surface ID s.
-#
-#   sbatch --array=1-50 run_rand.slurm WC            # 50 random WC surfaces
-#   sbatch --array=1-50 run_rand.slurm W             # 50 random W surfaces
-#   sbatch --array=1-30 run_rand.slurm WC bas "-var beta 0 -var gamma 0"   # basal refs, random azimuth
-#   sbatch --array=1-50 run_rand.slurm W r "-var T 300 -var R 35 -var a 3.152"  # Jussila conditions
-# EXTRA (3rd argument) goes to BOTH steps, so T / R / d_fix stay consistent.
-#
-# Run it inside a directory holding the decks and the potential files
-# (W: w_eam4.fs WHe.table HeHe.table; WC: WCH.tersoff WHe.table CHe.table HeHe.table).
-# EDIT the lines marked EDIT for your cluster.
+# One random surface per array task (task ID = surface ID s): build it
+# (step 1), then NIMP He impacts at each energy (step 2).
+#   sbatch --array=1-50 run_rand.slurm WC                     # 50 random WC surfaces
+#   sbatch --array=1-50 run_rand.slurm W                      # 50 random W surfaces
+#   sbatch --array=1-30 run_rand.slurm WC bas "-var beta 0 -var gamma 0"         # basal refs
+#   sbatch --array=1-50 run_rand.slurm W r "-var T 300 -var R 35 -var a 3.152"   # Jussila
+# The 3rd argument goes to both steps.  Run in a folder with the decks and
+# potentials (W: w_eam4.fs WHe.table HeHe.table; WC: WCH.tersoff WHe.table
+# CHe.table HeHe.table).  EDIT the marked lines for your cluster.
 #SBATCH -J randsim
 #SBATCH -N 1
 #SBATCH --ntasks=8                  # EDIT

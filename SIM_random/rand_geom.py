@@ -1,17 +1,15 @@
-"""
-rand_geom.py - shared geometry for the random-orientation SIM figures.
+"""rand_geom.py - shared geometry for the random-orientation SIM figures.
 
-Same maths as in_rand_W.step1 / in_rand_WC.step1:
-  lattice (+ random origin shift, lattice units) -> rotate about the box centre
-  by R = Rz(alpha) Rx(beta) Rz(gamma) (gamma applied first) -> keep r <= R, z <= 0.
-The surface normal in the UNROTATED crystal frame is n = R^T z
-  = (sin b sin g, sin b cos g, cos b).
+Same maths as in_rand_W.step1 / in_rand_WC.step1: lattice (+ random origin
+shift) -> rotate about the box centre by R = Rz(alpha) Rx(beta) Rz(gamma) ->
+keep r <= R, z <= 0.  Surface normal in the crystal frame:
+n = R^T z = (sin b sin g, sin b cos g, cos b).
 
-Euler angles for surface s are looked up, in this order:
-  1. rand_<MAT>_surfaces.dat written by step 1 (if given / found)  - exact
-  2. rand_angles_lammps.csv (pre-computed from the LAMMPS random stream)  - exact
-  3. the python LAMMPS module, if installed  - exact
-  4. numpy  - NOT the runs' surfaces (flagged in the figures)
+Euler angles of surface s, first found of:
+  1. rand_<MAT>_surfaces.dat from step 1            exact
+  2. rand_angles_lammps.csv (LAMMPS random stream)   exact
+  3. the LAMMPS python module                        exact
+  4. numpy                                           NOT the runs' surfaces (flagged)
 """
 import math
 import os

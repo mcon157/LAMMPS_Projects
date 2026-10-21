@@ -1,33 +1,28 @@
 #!/bin/bash
 # =====================================================================
-# Build a current stable LAMMPS on an HPC cluster with the packages the
-# W-C / He CIM decks need, plus EXTRA-FIX for fix electron/stopping.
-#
-#   MANYBODY  : pair tersoff/zbl (WC deck), pair eam/fs (pure-W deck)
-#   EXTRA-FIX : fix electron/stopping, fix electron/stopping/fit
-#   core      : pair table, hybrid/overlay, fix dt/reset, nve, nvt
-#   OPENMP    : optional /omp accelerated styles (harmless to include)
-#
-# Run it on a LOGIN node (or better, an interactive compute node) from
-# your home or project space:
-#     bash build_lammps.sh
-# Edit the MODULE block first - module names differ on every cluster.
+# Build current stable LAMMPS with what the decks need, plus EXTRA-FIX
+# for fix electron/stopping:
+#   MANYBODY   tersoff/zbl (WC), eam/fs (W)      EXTRA-FIX  electron/stopping
+#   core       table, hybrid/overlay, dt/reset   OPENMP     optional /omp styles
+# Run on a login or interactive node:  bash build_lammps.sh
+# Edit the module block first (names differ on every cluster).
 # =====================================================================
 set -euo pipefail
 
 # ---- where things go -------------------------------------------------
 SRC_ROOT=${SRC_ROOT:-$HOME/software}          # source checkout lives here
-BRANCH=${BRANCH:-stable}                      # 'stable' = current yearly stable + bugfix updates
-NPROC=${NPROC:-8}                             # parallel compile jobs (be polite on login nodes)
+BRANCH=${BRANCH:-stable}                      # 'stable' = current stable release + bugfixes
+NPROC=${NPROC:-8}                             # parallel compile jobs
 
-# ---- MODULES: EDIT FOR YOUR CLUSTER ---------------------------------
-# Check what exists with:  module avail gcc ; module avail openmpi ; module avail cmake
-# Needs: CMake >= 3.20, a C++17 compiler (a recent GCC/Intel/oneAPI), and an MPI.
-# Use the SAME compiler+MPI pair at build time and in your job scripts.
+# ---- modules: EDIT FOR YOUR CLUSTER (this set worked on one cluster) ----
+# Needs CMake >= 3.20, a C++17 compiler and an MPI; use the same pair in your job scripts.
+# Check:  module avail gcc ; module avail openmpi ; module avail cmake
 module purge
-module load gcc            # e.g. gcc/12.x
-module load openmpi        # e.g. openmpi/4.1.x  (or intel-mpi / mpich)
-module load cmake          # must report >= 3.20
+module load gcc/10.2.0
+module load openmpi/4.0.5-gcc
+module load cmake/3.23.2-intel
+module load hdf5/1.10.7-gcc
+module load boost/1.78.0-gcc
 module list
 
 cmake --version | head -1
@@ -44,7 +39,7 @@ else
     git -C lammps checkout -B "$BRANCH" FETCH_HEAD
 fi
 
-# the version string you will quote in the paper / methods
+# version string to quote in methods sections
 grep LAMMPS_VERSION lammps/src/version.h
 
 # ---- configure -------------------------------------------------------
