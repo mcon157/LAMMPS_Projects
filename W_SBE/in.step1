@@ -1,4 +1,9 @@
 
+# Bulk bcc W at temperature T (NPT): average lattice constant and thermal
+# expansion relative to a0 at T0.  Appends to thermal_expansion_W_summary.dat
+# and writes W_bulk_relaxed_${T}K.restart.  Set T below (an equal-style
+# variable, so not -var), then:  lmp -in in.step1
+
 clear
 units           metal
 dimension       3

@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""
-rand_orientation_gif.py - animated GIF of the random surfaces, one frame per surface.
+"""rand_orientation_gif.py - animated GIF, one frame per random surface.
 
-Each frame draws random surface s the way it sits in the ORIGINAL (unrotated)
-lattice: the crystal block in its own frame, with the plane that the step-1
-deck turns into the irradiated surface.  The plane's Miller label sits in the
-top-left corner.  Optionally the right half shows what the He sees: the top
-view of the same surface after rotation.
+Each frame draws surface s in the unrotated lattice (the crystal block and the
+plane the step-1 deck turns into the surface), with its Miller label top left;
+optionally the right half shows the rotated surface from above.  Angles come
+from rand_angles_lammps.csv (the decks' random stream), or --surfaces-dat.
 
-Angles come from rand_angles_lammps.csv (the LAMMPS random stream of the
-decks), so frame s is surface s of the runs; pass --surfaces-dat to read them
-from the step-1 log instead.
-
-Edit the options below, or override them on the command line:
     python rand_orientation_gif.py                       # W, surfaces 1-50
     python rand_orientation_gif.py --mat WC --first 1 --last 20 --ms 800
 """
@@ -35,7 +28,7 @@ FRAME_LAST = 50           # last random surface s (inclusive)
 FRAME_STEP = 1            # every n-th surface
 MS_PER_FRAME = 1200       # display time per frame (ms); 1200 ms = 0.83 frames/s
 HOLD_FIRST_MS = 2500      # longer pause on the first frame (ms)
-REFERENCE_FRAMES = True   # start with the low-index planes: W (001),(011),(111); WC basal, prism, a-plane
+REFERENCE_FRAMES = True   # low-index planes first: W (001),(011),(111); WC basal, prism, a-plane
 SHOW_TOPVIEW = True       # right panel: top view of the rotated surface (what the He sees)
 LOOP = 0                  # 0 = loop forever
 DPI = 90                  # GIF resolution (90 dpi x 12 in = 1080 px wide)

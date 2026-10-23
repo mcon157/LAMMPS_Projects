@@ -1,7 +1,7 @@
 # ============================================================
-# STEP 2A-0K: Basic surface PE estimate for W at 0 K
-# Builds W(001) slab directly, minimizes, and computes:
-#   SBE_PE = -<PE_surface atom>
+# W(001) surface binding energy from the potential energy at 0 K:
+# build the slab, minimize, SBE_PE = -<PE of a surface atom>.
+# Appends to sbe_PE_0K.dat.
 # ============================================================
 
 clear
@@ -14,7 +14,7 @@ boundary        p p f
 # User parameters
 # -----------------------------
 
-variable        a equal 3.165          # Yang used 3.165 A; you can use 3.152 for Jussila/Marinica 300 K
+variable        a equal 3.165          # EAM4 value; 3.152 A reproduces Jussila/Marinica at 300 K
 variable        nx equal 21
 variable        ny equal 21
 variable        nz equal 21
@@ -31,8 +31,7 @@ variable        surf_thick equal 3.5
 
 lattice         bcc ${a} orient x 1 0 0 orient y 0 1 0 orient z 0 0 1
 
-# Make slab region in lattice units, then add vacuum via box region in box units is harder.
-# Easier: build full slab first, then expand z box.
+# Build the full slab, then extend the z box for vacuum.
 region          slab block 0 ${nx} 0 ${ny} 0 ${nz} units lattice
 create_box      1 slab
 create_atoms    1 box

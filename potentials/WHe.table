@@ -2,7 +2,7 @@
 # 
 #-> LAMMPS Potential File in tabular format.                    <-#
 # N. Juslin and B.D. Wirth, J. Nucl. Mater. 432: 61-66 (2013).    #
-# Implemented by K.D. Hammond (2013) karlh@utk.edu
+# Implemented by K.D. Hammond (2013)
 WHe
 N 325
 

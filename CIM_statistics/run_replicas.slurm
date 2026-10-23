@@ -1,24 +1,20 @@
 #!/bin/bash
-# Runs the seed folders listed on line $SLURM_ARRAY_TASK_ID of the task
-# file, one after another.  Submitted by submit_all.sh, which writes the
-# task file (logs/tasks_<date>.txt) and passes it as TASKS.  Don't sbatch
-# this file directly - use ./submit_all.sh (-t for a one-seed test).
-#
-# EDIT the four lines marked EDIT (same as your main CIM jobs).  If a job
-# runs several seeds, the wall time must cover all of them (or pass
-# -T HH:MM:SS to submit_all.sh).
+# Runs the seed folders on line $SLURM_ARRAY_TASK_ID of the task file, one
+# after another.  Submitted by ./submit_all.sh (which passes TASKS); do not
+# sbatch it directly.  EDIT account, partition/qos, cores and wall time to
+# match your main CIM jobs; the wall time must cover all seeds of a task.
 #SBATCH -J cimrep
-#SBATCH -A ACF-UTK0016
+#SBATCH -A YOUR_ACCOUNT            # EDIT
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=24
 #SBATCH --partition=long
 #SBATCH --qos=long
-#SBATCH --time=2-00:00:00 
+#SBATCH --time=2-00:00:00          # EDIT
 #SBATCH -o logs/cimrep_%A_%a.out
 #SBATCH -e logs/cimrep_%A_%a.err
 
-module load lammps/29Sep2021_intel
-LMP=lmp_mpi
+module load lammps/29Sep2021_intel  # EDIT: your LAMMPS module
+LMP=lmp_mpi                         # EDIT
 
 : "${TASKS:?no task file - submit with ./submit_all.sh}"
 TID=${SLURM_ARRAY_TASK_ID:-1}

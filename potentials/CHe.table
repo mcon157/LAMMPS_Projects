@@ -1,6 +1,6 @@
 # LAMMPS Potential File in tabular Format 
 # r<0.8: zbl, 0.8<r<2.8: p0+p1*r+p2*r**2+p3*r**3+p4*r**4+p5*r**5, r>2.8: LJ
-#Implemented by Li Yang, liyang@utk.edu
+# Implemented by Li Yang
 CHe
 N   76
 

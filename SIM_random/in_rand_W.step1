@@ -1,48 +1,35 @@
 # =====================================================================
-# Random-orientation W hemisphere for single-impact sputtering (SIM).
-# Method after Jussila, Granberg & Nordlund, Nucl. Mater. Energy 17
-# (2018) 113: rotate a crystal by random Euler angles, cut a hemisphere
-# whose flat face (z = 0) is the irradiated surface, and split it into
-# NVE core / thermostat shell / fixed shell.
-#
-# One surface per run.  The surface ID s sets every random number, so
-# s = 1..Nsurf gives Nsurf independent orientations and re-running a
-# given s rebuilds exactly the same surface.
+# Random-orientation W hemisphere for single-impact sputtering (SIM),
+# after Jussila, Granberg & Nordlund, Nucl. Mater. Energy 17 (2018) 113:
+# rotate a crystal by random Euler angles, cut a hemisphere (flat face at
+# z = 0 is the surface), split into NVE core / thermostat / fixed shells.
+# The surface ID s seeds everything: re-running s rebuilds the same surface.
 #
 #   lmp -in in_rand_W.step1 -var s 7
-#   lmp -in in_rand_W.step1 -var s 7 -var T 300          (Jussila conditions)
-#
-# Low-index references with random azimuth only (Jussila used 30 each):
-#   (001): -var beta 0       -var gamma 0
-#   (011): -var beta 45      -var gamma 0
-#   (111): -var beta 54.7356 -var gamma 45
-#   (alpha stays random = random azimuth; also pass -var tag 001 etc.)
-#
-# Writes:  rand_W_<tag><s>.restart      -> read by in_rand_W.step2
-#          dump.rand_W_<tag><s>.lammps   -> OVITO / schematics
-#          rand_W_surfaces.dat           -> one line per surface (append):
-#            tag s alpha beta gamma nx ny nz ox oy oz nW z_s
-#
-# LAMMPS 29Oct2020.  No line continuations, no if/else.
+#   lmp -in in_rand_W.step1 -var s 7 -var T 300                 (Jussila conditions)
+# Low-index references (random azimuth only), add -var tag 001 etc.:
+#   (001) -var beta 0 -var gamma 0   (011) -var beta 45 -var gamma 0
+#   (111) -var beta 54.7356 -var gamma 45
+# Writes rand_W_<tag><s>.restart (for step 2), dump.rand_W_<tag><s>.lammps,
+# and appends to rand_W_surfaces.dat: tag s alpha beta gamma nx ny nz ox oy oz nW z_s
+# LAMMPS 29Oct2020; no line continuations, no if/else.
 # =====================================================================
 
 # ---- knobs ----------------------------------------------------------
 variable s       index 1          # surface ID (1, 2, 3, ...)
 variable tag     index r          # r = random; 001 / 011 / 111 for references
 variable T       index 739        # K; 0.2 Tm.  300 K reproduces Jussila 2018
-variable a       index 3.165      # W lattice constant at T (A).  CHECK: use the
-                                  # value from in_W001.step1 / an NPT run of
-                                  # w_eam4.fs at T (Jussila: 3.152 at 300 K)
+variable a       index 3.165      # W lattice constant at T (A); use your NPT value
+                                  # (Jussila: 3.152 A at 300 K)
 variable R       index 50.0       # hemisphere radius (A); Jussila 35, checked 50
 variable d_fix   index 3.0        # fixed outer shell thickness (A)
 variable d_thermo index 10.0      # fixed + thermostat shell thickness (A)
 variable t_eq    index 10.0       # ps relaxation before impacts (Jussila: 10 ps)
 variable vac     index 40.0       # vacuum above the surface (A)
 
-# ---- random orientation (immediate $() evaluation freezes each draw) --
-# LAMMPS keeps ONE random stream per run for random() in equal-style
-# variables, seeded by the first call; the seed of every later call is
-# ignored.  So the first draw carries the surface ID.
+# ---- random orientation ($() freezes each draw) ---------------------
+# One random stream per run, seeded by the first random() call: the first
+# draw carries the surface ID.
 variable seed0   equal 1000003*${s}+17
 variable u_alpha equal $(random(0.0,1.0,v_seed0))
 variable u_beta  equal $(random(0.0,1.0,v_seed0))

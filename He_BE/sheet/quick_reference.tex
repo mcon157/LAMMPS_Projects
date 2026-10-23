@@ -1,0 +1,591 @@
+% =====================================================================
+% quick_reference.tex -- He in WC (and the bcc-W benchmark): look-up sheet
+% compile:  latexmk -pdf quick_reference.tex     (needs ../schematics/*.pdf)
+% =====================================================================
+\documentclass[10pt]{article}
+\usepackage[a4paper,margin=1.5cm,landscape]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,xltabular,array,colortbl}
+\usepackage[table]{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{titlesec}
+\usepackage{needspace}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{ink2}{HTML}{52514E}
+\definecolor{acc}{HTML}{2A78D6}
+\definecolor{org}{HTML}{EB6834}
+\definecolor{grn}{HTML}{1BAF7A}
+\definecolor{red}{HTML}{C0485F}
+\definecolor{rowg}{HTML}{F4F4F1}
+\newcommand{\cmd}[1]{\texttt{\small #1}}
+\newcommand{\up}{\textcolor{org}{$\uparrow$}}
+\newcommand{\dn}{\textcolor{acc}{$\downarrow$}}
+\newcommand{\Eb}{E_\mathrm{b}}
+\newcommand{\Eblk}{E_\mathrm{bulk}}
+\newcommand{\He}{\mathrm{He}}
+\newcommand{\sect}[1]{\Needspace{12\baselineskip}\section{#1}}
+
+\titleformat{\section}{\large\bfseries\color{acc}}{\thesection}{0.6em}{}[\vspace{-0.4em}\textcolor{acc}{\rule{\linewidth}{0.6pt}}]
+\titlespacing*{\section}{0pt}{0.9em}{0.5em}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.5em}{}
+\titlespacing*{\subsection}{0pt}{0.6em}{0.25em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.3em}
+\setlist{nosep,leftmargin=1.2em}
+\renewcommand{\arraystretch}{1.18}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[L]{\footnotesize\color{ink2} He in WC -- quick reference (he\_be\_v3 + wc\_ef, LAMMPS 29 Sep 2021)}
+\fancyfoot[R]{\footnotesize\color{ink2}\thepage}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+{\LARGE\bfseries He in WC: quick-reference sheet}\\[0.2em]
+{\color{ink2} Model schema, LAMMPS commands and their knobs, every equation in the analysis
+scripts, the order of events in every input file, and the terms. Values are those of the v3
+binding-energy package (\texttt{he\_be\_v3}), the formation-energy package (\texttt{wc\_ef}) and the
+Juslin \& Wirth 2013 (JW) benchmark. Sign convention throughout: \textbf{positive binding = bound}.}
+
+{\small\color{ink2} 1 Model schema (inputs, results, limitations) \;$\cdot$\; 2 Workflow and files \;$\cdot$\; 3 Order of events in every input file \;$\cdot$\; 4 LAMMPS commands and knobs \;$\cdot$\; 5 Equations \;$\cdot$\; 6 Glossary \;$\cdot$\; 7 Renders of the simulation cells. Schematics (\texttt{schematics/S1--S6}), renders (\texttt{renders/R1--R4}) and animations (\texttt{gifs/G1--G4}) are also separate files.}
+\vspace{0.2em}
+\begin{center}
+\includegraphics[height=0.70\textheight]{../schematics/S1_model_schema.pdf}
+\end{center}
+\newpage
+
+% =====================================================================
+\sect{Model schema}
+% =====================================================================
+Full machine-readable version: \texttt{model\_schema.yaml}. Sensitivity = how much the
+reported binding energies move if the input is changed: \textbf{high} $>0.1$\,eV or changes a
+conclusion; \textbf{med} 0.01--0.1\,eV; \textbf{low} $<0.01$\,eV.
+
+\begin{xltabular}{\linewidth}{L{3.1cm} L{7.4cm} Y L{1.2cm}}
+\toprule
+\textbf{Input} & \textbf{Value used} & \textbf{Source / note} & \textbf{Sens.} \\
+\midrule\endhead
+W--W, W--C, C--C & ABOP, \cmd{tersoff/zbl}, file \cmd{WCH.tersoff} & Juslin \emph{et al.} J.\ Appl.\ Phys.\ 98 (2005) 123520. He is \cmd{NULL} in it (closed shell). & high \\
+W--He & pair table \cmd{WHe.table}, keyword \cmd{WHe}, 1e-6--3.25\,\AA & Juslin \& Wirth, J.\ Nucl.\ Mater.\ 432 (2013) 61; same data as LAMMPS \cmd{W\_He\_JW2013.table}. Validated in bcc W only. & high \\
+C--He & \cmd{CHe.table}, 0.005--8\,\AA & group table; LJ tail ($\sigma$ 2.524\,\AA, $\varepsilon$ 16.0\,meV) beyond 3.6\,\AA, switched to 0 at 6--8\,\AA; core extended $<0.1$\,\AA. Not validated. & high \\
+He--He & \cmd{HeHe.table}, 0.00076--3.8\,\AA & Beck (1968) + Morishita (2003) core. fcc He $-0.00538$\,eV/atom (JW: 0.0054). & med \\
+Host lattice & hexagonal WC, $a=2.91862$, $c=2.81498$\,\AA\ ($c/a=0.9645$), $E_\mathrm{coh}=-8.33007$\,eV/atom & the potential's own 0\,K values from \cmd{in.bulk0} & none \\
+Cell & $8\times5\times8$ orthogonal cells, 1280 atoms, $23.35\times25.28\times22.52$\,\AA, \cmd{p p p} & fixed volume for all defect cells (constant-volume convention) & med \\
+$\Eblk$ & $-10662.4900860$\,eV & checkpoint; must agree to $\sim10^{-6}$ & -- \\
+He reference & one He at the trigonal-prismatic channel, $(\tfrac12,\tfrac56,\tfrac12)$ of cell (4,2,4); $E_\mathrm{sol}=3.909143$\,eV & checkpoint from \cmd{in.ref} & -- \\
+Minimiser & \cmd{cg}, \cmd{line quadratic}, etol 0, ftol $10^{-6}$\,eV/\AA, 100000 / 1000000 & ftol is the 2-norm of the whole force vector & low \\
+Search & TRIALS 4; anneal 300 / 614.6 / 900\,K; 5000 + 5000 steps of 1\,fs; Berendsen $\tau$ 0.1\,ps; seed 31337 & 4 relaxations per trial; lowest intact minimum kept & high \\
+He placement & within 1.4\,\AA\ (W site) / 0.9\,\AA\ (C site) of a vacated site; He--He and He--host $\ge1.5$\,\AA & constraints relaxed stepwise only when the void is crowded & low \\
+Clusters & \cmd{vw1 vw2 vw2a vw3 vc1 vwc vwc2 vw2c2}; He 0--12 (vc1 0--4, vwc/vwc2 0--10) & each = parent + one site (Sec.~\ref{sec:geom}) & -- \\
+Diagnostics & host atom moved $>1$\,\AA\ = mutated; core = farthest site $+2.2$\,\AA; same min $<1$\,meV; spread warn 0.10\,eV; $R_g$ jump 1.5\,\AA & \cmd{analyze\_v3.py} & -- \\
+\bottomrule
+\end{xltabular}
+
+\Needspace{10\baselineskip}\subsection*{Results: binding energies (v3, Oct 2026) -- what to expect on a rerun}
+\begin{xltabular}{\linewidth}{L{5.2cm} L{6.6cm} Y}
+\toprule
+\textbf{Quantity} & \textbf{Value} & \textbf{Comment} \\
+\midrule\endhead
+$E_\mathrm{sol}$, channel site & 3.909\,eV & lowest interstitial site in WC \\
+$E_\mathrm{sol}$, metastable site near C & 7.302\,eV & \\
+He--He pair $E_\mathrm{int}(d)$ & $-0.070$ (2.815\,\AA, same channel), $-0.036$ (2.92\,\AA), $+0.018$ (4.05\,\AA), $|E|<0.003$ beyond 5\,\AA & negative = attractive \\
+$\Eb(\He\to\He_n)$ interstitial & 0.07 (chain), 0.02--0.10 (bundle) & weak; most sensitive to 0\,K / entropy \\
+$\Eb(\He\to V_\mathrm{W})$ & 3.36\,eV & DFT check needed \\
+$\Eb(\He\to V_\mathrm{C})$ & 0.49\,eV; further He 0.05--0.35\,eV & extra He sit in the surrounding channels \\
+$\Eb(\He\to\He_{n-1}V_\mathrm{W})$ & 1.82, 1.57, 1.62, 1.23, 1.28 ($n$=2--6); 0.12 ($n$=7); 0.42, 0.53; $-0.18$, $-0.14$ ($n$=10, 11) & capacity 9 He; the $n$=7 dip is reproducible \\
+First He into larger clusters & 3.85 (c-axis V$_2$, V$_3$), 3.41 (in-plane V$_2$), 3.41--3.57 (mixed) & all below $E_\mathrm{sol}$ = 3.91 \\
+He filling of multi-vacancy clusters & stays positive in the range studied & min 0.91 (c-axis V$_2$, 5.5 He/V); 0.29 ($V_\mathrm{W}V_\mathrm{C}$, 4 He/V) \\
+Empty W clusters & $-0.98$ (c-axis V$_2$), $-0.36$ (in-plane V$_2$), $-1.29$ (V$_3$) & unbound \\
+Empty mixed clusters & $+0.38$ ($V_\mathrm{W}V_\mathrm{C}$), $+0.42$ ($V_\mathrm{W}(V_\mathrm{C})_2$), $+1.69$ ($(V_\mathrm{W})_2(V_\mathrm{C})_2$) & bound; DFT check of $V_\mathrm{W}V_\mathrm{C}$ first \\
+Preferred W divacancy & in-plane for $n\le2$ (by 0.62, 0.18, 0.11); c-axis from $n=3$ (by 0.13--1.07) & He switches the orientation \\
+$\Eb(V\to\He_nV_m)$ & W clusters: $>0$ from $\sim$1 He/V, 12.4 at 6 He/V; $V_\mathrm{W}$ to clusters with $V_\mathrm{C}$: 3.3--9.2; $V_\mathrm{C}$: 0.04--2.1 & He stabilises vacancy clusters \\
+Trap mutation & none; max host displacement 0.39\,\AA & He escapes to channels instead \\
+Search & median 12/16 hits, trial spread $\le$0.09\,eV; v2 reproduced within 0.04\,eV & crowded rows $\pm$0.1\,eV \\
+\bottomrule
+\end{xltabular}
+
+\Needspace{14\baselineskip}\subsection*{Results: formation energies (\texttt{wc\_ef}, Oct 2026)}
+\textbf{Reference phases} (same potential; 0\,K, zero stress). They set the window
+$\mu_\mathrm C\in[\varepsilon_\mathrm{WC}-\varepsilon_\mathrm W,\ \varepsilon_\mathrm C] = [-7.7700,\ -7.3612]$\,eV, width 0.409\,eV.
+
+\begin{xltabular}{\linewidth}{L{3.2cm} L{3.4cm} L{4.2cm} Y}
+\toprule
+\textbf{Phase} & \textbf{Energy} & \textbf{Relaxed lattice} & \textbf{Meaning} \\
+\midrule\endhead
+hexagonal WC & $\varepsilon_\mathrm{WC} = -16.660141$\,eV/f.u. & $a$ 2.91862, $c$ 2.81498\,\AA & equals $E_\mathrm{bulk}/640$ (check passed) \\
+bcc W & $\varepsilon_\mathrm W = -8.890096$\,eV/atom & $a$ 3.16496\,\AA & W-rich limit \\
+graphite (= graphene) & $\varepsilon_\mathrm C = -7.361187$\,eV/atom & $a$ 2.5162\,\AA\ (C--C 1.453\,\AA) & C-rich limit (no interlayer term) \\
+diamond & $-7.316044$\,eV/atom & $a$ 3.56012\,\AA & 45\,meV/atom above graphite \\
+W2C (CdI2 type) & $-23.958573$\,eV/f.u. & $a$ 2.9853, $c$ 5.0407\,\AA & \textbf{+1.59\,eV above WC + W}; $\Delta H_f = +1.18$: unstable in this potential \\
+rocksalt WC & $-15.676602$\,eV/f.u. & $a$ 4.38317\,\AA & +0.98\,eV/f.u. above hexagonal WC \\
+$\Delta H_f(\mathrm{WC})$ & $-0.4089$\,eV/f.u. & & expt.\ $\approx-0.42$ \\
+\bottomrule
+\end{xltabular}
+
+\textbf{Point defects} ($\Delta E = E(\text{defect}) - E_\mathrm{bulk}$; $E_f$ in eV). ``Elemental refs'' uses bcc W and graphite at the same time, the convention of Kong \emph{et al.} (J.\ Nucl.\ Mater.\ 2010, GGA, 128 atoms), so those two columns compare like with like.
+
+\begin{xltabular}{\linewidth}{L{3.6cm} L{1.5cm} L{1.4cm} L{1.4cm} L{1.7cm} L{1.4cm} Y}
+\toprule
+\textbf{Defect (lowest candidate)} & $\Delta E$ & \textbf{W-rich} & \textbf{C-rich} & \textbf{elemental refs} & \textbf{DFT} & \textbf{Note} \\
+\midrule\endhead
+$V_\mathrm W$ & 12.5604 & 3.670 & 3.261 & 3.670 & 4.14 & same as v3 \\
+$V_\mathrm C$ & 8.2931 & 0.523 & 0.932 & 0.932 & 0.39 & cheapest defect everywhere in the window \\
+$C_i$ (channel site) & $-4.5468$ & 3.223 & 2.814 & 2.814 & 3.41 & the y-dumbbell relaxes to the same state; a-dumbbell +0.79; W-layer sites +1.73 and +5.76 \\
+$W_i$ (dumbbell along a, relaxed) & 3.4459 & 12.336 & 12.745 & 12.336 & 11.58 & still dropping at cycle 4; irrelevant thermally \\
+$W_\mathrm C$ (W on C site) & 8.0954 & 9.215 & 10.033 & 9.624 & 8.69 & stays on site \\
+$C_\mathrm W$ (C on W site) & 7.8708 & 6.751 & 5.933 & 6.342 & 8.81 (5.29 as $C_i+V_\mathrm W$) & relaxes toward the channel: a $V_\mathrm W$--$C_i$ pair bound by 0.14\,eV \\
+$V_\mathrm C$ pair, c-axis & 17.0469 & 1.507 & 2.325 & & & binding $-0.46$: C vacancies \textbf{repel} \\
+$V_\mathrm C$ pair, in-plane & 16.8381 & 1.298 & 2.116 & & & binding $-0.25$: repel \\
+$V_\mathrm W V_\mathrm C$ & 20.4731 & 3.813 & 3.813 & & & binding $+0.38$ (same as v3) \\
+\bottomrule
+\end{xltabular}
+
+\begin{xltabular}{\linewidth}{L{5.2cm} L{2.2cm} L{2.6cm} Y}
+\toprule
+\textbf{$\mu$-independent combination} & \textbf{This work} & \textbf{DFT (Kong)} & \textbf{Comment} \\
+\midrule\endhead
+Schottky pair $V_\mathrm W + V_\mathrm C$ (isolated) & 4.193 & $4.53+\Delta H_f\approx4.1$ & agrees; the split between W and C differs by $\sim$0.5\,eV each way \\
+C Frenkel pair $V_\mathrm C + C_i$ & 3.746 & 3.80 & agrees \\
+W Frenkel pair $V_\mathrm W + W_i$ & 16.006 & 15.72 & agrees within 0.3 \\
+antisite pair $W_\mathrm C + C_\mathrm W$ & 15.966 & 17.50 & DFT's $C_\mathrm W$ (8.81) relaxes to $C_i+V_\mathrm W$ at 5.29 (sum 13.98) \\
+\bottomrule
+\end{xltabular}
+
+\textbf{Conditions} (equilibrium site fractions, no entropy, $g=1$ except pairs):
+\begin{xltabular}{\linewidth}{L{4.2cm} L{2.0cm} L{1.2cm} L{1.2cm} L{1.2cm} Y}
+\toprule
+\textbf{Condition} & $\mu_\mathrm C-\varepsilon_\mathrm C$ & $V_\mathrm W$ & $V_\mathrm C$ & $C_i$ & \textbf{C/W at 1000\,K / note} \\
+\midrule\endhead
+W-rich limit (WC/W) & $-0.409$ & 3.670 & 0.523 & 3.223 & 0.99769 (0.23\% C-poor) \\
+mid-window & $-0.204$ & 3.466 & 0.728 & 3.019 & 0.99978 \\
+C-rich limit (WC/graphite) & 0 & 3.261 & 0.932 & 2.814 & 0.99998 \\
+50/50 WC, 300--1500\,K & 0 (clamped) & 3.261 & 0.932 & 2.814 & exact 50/50 is out of reach: $V_\mathrm C$ always outnumbers $C_i$; closest = C-rich limit (C/W 0.99926 at 1500\,K) \\
+WC$_{0.999}$, 1000\,K & $-0.337$ & 3.598 & 0.595 & 3.151 & inside the window \\
+WC$_{0.99}$, 1000\,K & $-0.536$ & 3.797 & 0.396 & 3.350 & 0.127\,eV beyond the W-rich limit: non-equilibrium \\
+WC$_{0.95}$, 1000\,K & $-0.677$ & 3.938 & 0.255 & 3.491 & 0.268\,eV beyond: non-equilibrium \\
+\bottomrule
+\end{xltabular}
+He$_n$V$_m$ formation energies at the same conditions: \cmd{he\_v\_formation.csv}
+($E_f = E - E_\mathrm{bulk} + n_\mathrm W\mu_\mathrm W + n_\mathrm C\mu_\mathrm C$, He from vacuum), e.g.\ He$_1V_\mathrm W$ 4.22 (W-rich) / 3.81 (C-rich);
+clusters with equal W and C vacancies ($V_\mathrm WV_\mathrm C$, $(V_\mathrm W)_2(V_\mathrm C)_2$) do not depend on $\mu$.
+
+\textbf{Take-aways.} (1) $\Delta H_f(\mathrm{WC})$ and all $\mu$-independent combinations agree with experiment/DFT. (2) The potential puts W2C far above WC + W, so the W-rich limit is bcc W, and a C-depleted layer would separate into WC + W rather than form W2C. (3) $V_\mathrm C$ is the dominant defect (0.5--0.9\,eV), so WC is always slightly C-poor; C vacancies repel each other, so they stay dispersed. (4) $C_i$ sits in the same channel site as He.
+
+\subsection*{Limitations}
+\begin{multicols}{2}
+\begin{itemize}
+\item \textbf{Transferability.} W--He and C--He pair potentials were not fitted in WC. Error unknown, possibly tenths of an eV. $\to$ DFT on $\sim$12--15 small cells ($\le2$ vacancies, $\le4$ He).
+\item \textbf{Host potential.} ABOP vacancy and divacancy energetics in WC unchecked; controls the sign of $\Eb(V{+}V)$. $\to$ compare $V_\mathrm{W}$, $V_\mathrm{C}$, $V_\mathrm{W}V_\mathrm{C}$ with DFT.
+\item \textbf{0\,K statics.} No vibrational entropy, no zero-point energy. Matters for 0.01--0.1\,eV bonds (He--He), barely for eV-scale trapping.
+\item \textbf{Search.} Stochastic; can miss the global minimum in crowded clusters. Shows as \cmd{TRIALS-DIFFER} / \cmd{FOUND-ONCE}; v3: $\pm$0.1\,eV in the most crowded rows.
+\item \textbf{Cluster geometry.} One vacancy arrangement per cluster size; only the He were searched. Other arrangements (mixed clusters) may bind more.
+\item \textbf{Cell size.} One 1280-atom cell; image strain grows with cluster size. $\to$ repeat key rows at $10\times6\times10$.
+\item \textbf{Chemical potential.} Vacancy \emph{formation} energies need $\mu_\mathrm{W},\mu_\mathrm{C}$; every \emph{binding} energy here is independent of them.
+\item \textbf{No kinetics.} No barriers, so no detrapping energy $E_\mathrm{dt}=\Eb+E_\mathrm{m}$ or desorption temperature. $\to$ NEB.
+\item \textbf{Version.} Decks follow the 29 Sep 2021 compute-currency rules; newer LAMMPS is more permissive, so they still run.
+\item \textbf{Formation energies.} One W2C structure; graphite = graphene (no interlayer term); dilute defects, no formation entropy ($g=1$); equilibrium only -- a sputter-depleted surface is outside it.
+\end{itemize}
+\end{multicols}
+
+% =====================================================================
+\sect{Workflow and files}
+% =====================================================================
+\begin{xltabular}{\linewidth}{L{2.8cm} Y L{6.2cm}}
+\toprule
+\textbf{Step} & \textbf{What it does} & \textbf{Writes} \\
+\midrule\endhead
+\cmd{in.bulk0} & builds the $8\times5\times8$ WC cell and relaxes the box at 0\,K & \cmd{wc\_bulk0.restart}; prints $E_\mathrm{bulk}$, $a$, $c$ \\
+\cmd{in.ref} & one He at the channel site, CG & \cmd{res\_ref.dat} ($E_\mathrm{bulk}$, $E(\He_1)$) \\
+\cmd{make\_v3.py} & builds clusters (parent + one site), random He placements (TRIALS per $n$), one deck per series & \cmd{cfg/<series>\_<k>.lmp}, \cmd{cfg/index.txt}, \cmd{in.<series>}, \cmd{series.json} \\
+\cmd{in.<series>} & per cfg: delete sites, add He, CG; anneal 300/614.6/900\,K, quench, CG after each & \cmd{res\_<series>.dat} (\cmd{k n m trial nvac cycle E dmax nfar kin rg rg0}), \cmd{dumps/} \\
+\cmd{analyze\_v3.py} & lowest intact minimum per (cluster, $n$), binding energies, flags, DFT column & \cmd{binding\_v3.csv}, \cmd{clusters\_v3.csv} \\
+\cmd{plot\_v3.py} & figures & \cmd{figures\_v3/} \\
+\cmd{run.slurm}, \cmd{submit\_v3.sh} & 12 MPI tasks, \cmd{short} partition, bulk0 first, the rest \cmd{afterok} & \cmd{log.<deck>} \\
+\cmd{check\_he\_positions.py} & where each He sits in the reported minima (void / channel / core) & printed table \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Formation energies (\texttt{wc\_ef})}} \\
+\cmd{make\_ef.py} & reference crystals, 19 defect cells, decks (\cmd{--cell} for a size check) & \cmd{phases/}, \cmd{cfg/def\_<k>.lmp}, \cmd{in.*}, \cmd{defects.json} \\
+\cmd{in.bulk\_ef} & bulk cell (identical to \cmd{in.bulk0} for $8\times5\times8$) & \cmd{wc\_bulk\_ef.restart}, \cmd{res\_bulk.dat} \\
+\cmd{in.phases} & bcc W, graphite, diamond, W2C, hex WC, rocksalt WC, box-relaxed & \cmd{res\_phases.dat} \\
+\cmd{in.defects} & 19 defect cells, CG + 3-step anneal ladder & \cmd{res\_defects.dat}, \cmd{dumps/} \\
+\cmd{analyze\_ef.py} & $\mu$ window, formation energies by condition, 50/50 and WC$_{1-y}$ solves & \cmd{ef\_summary.txt}, \cmd{ef\_conditions.csv}, \cmd{ef\_candidates.csv}, \cmd{ef\_vs\_mu.png}, \cmd{he\_v\_formation.csv} \\
+\cmd{submit\_ef.sh} & bulk\_ef and phases at once; defects \cmd{afterok} bulk\_ef & \cmd{log.*} \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Renders (\texttt{wc\_he\_reference/scripts})}} \\
+\cmd{renders.py} & R1--R4 below (OVITO, Tachyon) & \cmd{renders/*.png} \\
+\cmd{render\_dump.py} & any dump from your runs, same style, vacancies from its cfg & one png \\
+\bottomrule
+\end{xltabular}
+Run analysis only when \cmd{squeue -u \$USER} is empty and \cmd{grep -l "\^{}ERROR" log.*} prints nothing.
+
+% =====================================================================
+\sect{Order of events in every input file}
+% =====================================================================
+What each script and deck does, step by step, in the order it happens. Decks are LAMMPS
+input files (run with \cmd{lmp -in}); \texttt{.py} files run on a login node or your laptop.
+Files a step reads are \textcolor{acc}{blue}; files it writes are \textcolor{org}{orange}.
+\newcommand{\rfile}[1]{\textcolor{acc}{\texttt{\small #1}}}
+\newcommand{\wfile}[1]{\textcolor{org}{\texttt{\small #1}}}
+
+\subsection{Binding energies (\texttt{he\_be\_v3})}
+\textbf{Run order:} \cmd{make\_v3.py} (already run) $\rightarrow$ \cmd{submit\_v3.sh}: \cmd{in.bulk0}
+$\rightarrow$ (\cmd{in.ref} and the eight \cmd{in.<series>} in parallel) $\rightarrow$
+\cmd{analyze\_v3.py} $\rightarrow$ \cmd{plot\_v3.py}, \cmd{check\_he\_positions.py}.
+
+\begin{multicols}{2}
+\small
+\textbf{\cmd{make\_v3.py}}
+\begin{enumerate}
+\item List the perfect-lattice W, C and channel sites of the $8\times5\times8$ cell in cell units.
+\item Build each cluster: seed site W0 = (4.5, 2.5, 4) or C0 = (4.5, 3.167, 4.5); add one site at a time (compact rule; \cmd{vw2a} restricted to the basal plane).
+\item For each series and $n$: TRIALS random He placements inside the void (one for $n=0$); centre and radius of the core sphere.
+\item Write each cfg: \cmd{variable n m trial}; a \cmd{region sphere} per vacated site, \cmd{group vac}, \cmd{nvac}, \cmd{delete\_atoms}; \cmd{region core}; one \cmd{create\_atoms 3 single} per He $\rightarrow$ \wfile{cfg/<series>\_<k>.lmp}, \wfile{cfg/index.txt}.
+\item Fill the deck template (setup, record, 3$\times$ anneal + record, loop tail) $\rightarrow$ \wfile{in.<series>}, \wfile{in.ref}, \wfile{series.json}.
+\end{enumerate}
+
+\textbf{\cmd{in.bulk0}}
+\begin{enumerate}
+\item \cmd{units metal}, \cmd{atom\_style atomic}, \cmd{boundary p p p}.
+\item \cmd{lattice custom} (orthogonal WC basis, 614.6\,K guess for $a$, $c$); \cmd{region}/\cmd{create\_box 3}/\cmd{create\_atoms} (basis 1--2 W, 3--4 C); masses.
+\item \cmd{pair\_style hybrid/overlay} + four \cmd{pair\_coeff}; neighbour list.
+\item \cmd{fix box/relax ... couple xy} + CG; \cmd{unfix}; CG again.
+\item Print $a$, $c$, $E_\mathrm{bulk}$ $\rightarrow$ \wfile{wc\_bulk0.restart}.
+\end{enumerate}
+
+\textbf{\cmd{in.ref}}
+\begin{enumerate}
+\item \rfile{wc\_bulk0.restart}; pair lines; \cmd{run 0} $\rightarrow$ $E_\mathrm{bulk}$.
+\item \cmd{create\_atoms 3 single} at the channel site (4.5, 2.833, 4.5); CG; \cmd{run 0}.
+\item Print $E_\mathrm{bulk}$, $E(\He_1)$, $E_\mathrm{sol}$ $\rightarrow$ \wfile{res\_ref.dat}, \wfile{dump.ref.lammps}.
+\end{enumerate}
+
+\textbf{\cmd{in.<series>}} (e.g.\ \cmd{in.vw1})
+\begin{enumerate}
+\item Once: \rfile{wc\_bulk0.restart}, pair lines, \cmd{run 0} $\rightarrow$ $E_\mathrm{bulk}$; header lines of \wfile{res\_<series>.dat}; \cmd{mkdir dumps}.
+\item Loop over $k$: \cmd{clear}; \rfile{wc\_bulk0.restart}; pair, neighbour, \cmd{timestep 0.001}, \cmd{cg} + \cmd{line quadratic}.
+\item \cmd{include} \rfile{cfg/<series>\_<k>.lmp}: delete the vacated atoms, define core, add the He.
+\item Groups \cmd{host}, \cmd{heg}; $R_{g0}$; computes \cmd{dsp}, \cmd{dmax}, \cmd{nfar}; \cmd{thermo\_style} with them.
+\item Cycle 1: CG $\rightarrow$ \cmd{run 0} $\rightarrow$ print \cmd{k n m trial nvac 1 E dmax nfar kin rg rg0} $\rightarrow$ dump.
+\item Cycles 2--4 ($T$ = 300, 614.6, 900\,K): \cmd{velocity create} (\cmd{loop geom}) $\rightarrow$ \cmd{nve} + Berendsen at $T$, 5000 steps $\rightarrow$ Berendsen $T\to1$\,K, 5000 steps $\rightarrow$ unfix $\rightarrow$ CG $\rightarrow$ \cmd{run 0} $\rightarrow$ print $\rightarrow$ \wfile{dumps/<series>\_<k>\_c<cycle>.lammps}.
+\item \cmd{next k}; \cmd{jump SELF cfg}.
+\end{enumerate}
+
+\textbf{\cmd{analyze\_v3.py}}
+\begin{enumerate}
+\item Read \rfile{res\_ref.dat}, \rfile{series.json}, every \rfile{res\_<series>.dat}.
+\item Per (series, $n$): lowest intact minimum; hits, trial spread, winning cycle; flags.
+\item $E_b(\He\to)$, $E_b(V_s\to)$ for each parent, $E_b^\mathrm{tot}$; DFT column.
+\item Print tables (and v3 $-$ v2 with \cmd{--v2}) $\rightarrow$ \wfile{binding\_v3.csv}, \wfile{clusters\_v3.csv}.
+\end{enumerate}
+\textbf{\cmd{plot\_v3.py}}: \rfile{binding\_v3.csv} $\rightarrow$ \wfile{figures\_v3/}.\quad
+\textbf{\cmd{check\_he\_positions.py}}: same minimum as the analysis $\rightarrow$ its dump $\rightarrow$ each He classified as void / channel / other, in core or not.
+\end{multicols}
+
+\subsection{Formation energies (\texttt{wc\_ef})}
+\textbf{Run order:} \cmd{make\_ef.py} (already run) $\rightarrow$ \cmd{submit\_ef.sh}: \cmd{in.bulk\_ef} and
+\cmd{in.phases} at once, \cmd{in.defects} after \cmd{in.bulk\_ef} $\rightarrow$
+\cmd{analyze\_ef.py --v3 ../he\_be\_v3/binding\_v3.csv}.
+
+\begin{multicols}{2}
+\small
+\textbf{\cmd{make\_ef.py}}
+\begin{enumerate}
+\item Write \wfile{in.bulk\_ef} for the chosen cell (default $8\times5\times8$).
+\item Build six reference crystals; write \wfile{phases/<name>.data} and an include \wfile{phases/ph\_<k>.lmp} with its relaxation style (\cmd{iso}; hexagonal \cmd{x y z couple xy}; graphite \cmd{x y couple xy}, $z$ fixed) $\rightarrow$ \wfile{in.phases}.
+\item List the 19 defects as removed sites + added atoms, around cell (4, 2, 4).
+\item Write each cfg: \cmd{dname}; one site $\rightarrow$ \cmd{group vac region v1}, two $\rightarrow$ \cmd{region union}; \cmd{delete\_atoms}; \cmd{group host}; \cmd{create\_atoms}; \cmd{group added subtract all host} $\rightarrow$ \wfile{cfg/def\_<k>.lmp}.
+\item Fill the deck template (v3 ladder) $\rightarrow$ \wfile{in.defects}, \wfile{defects.json}.
+\end{enumerate}
+
+\textbf{\cmd{in.bulk\_ef}}: as \cmd{in.bulk0} $\rightarrow$ \wfile{wc\_bulk\_ef.restart}, \wfile{res\_bulk.dat}.
+
+\textbf{\cmd{in.phases}}
+\begin{enumerate}
+\item Header of \wfile{res\_phases.dat}; loop over $k$.
+\item \cmd{clear}; \cmd{include} \rfile{phases/ph\_<k>.lmp}: \cmd{read\_data} \rfile{phases/<name>.data}, pair lines, groups \cmd{w}, \cmd{c}.
+\item \cmd{fix box/relax} + CG, twice; plain CG; \cmd{run 0}.
+\item Print \cmd{name nW nC E lx ly lz press}; dump.
+\end{enumerate}
+
+\textbf{\cmd{in.defects}}
+\begin{enumerate}
+\item Once: \rfile{wc\_bulk\_ef.restart}; $E_\mathrm{bulk}$ $\rightarrow$ header of \wfile{res\_defects.dat}.
+\item Loop: \cmd{clear}, restart, pair, \cmd{include} \rfile{cfg/def\_<k>.lmp}.
+\item Computes \cmd{dsp}/\cmd{dmax}/\cmd{nfar} on the original host atoms.
+\item Cycles 1--4 exactly as \cmd{in.<series>}; each prints \cmd{k name cycle nvac E dmax nfar} and \cmd{xcm(added)} $\rightarrow$ \wfile{dumps/def\_<k>\_c<cycle>.lammps}.
+\end{enumerate}
+
+\textbf{\cmd{analyze\_ef.py}}
+\begin{enumerate}
+\item \rfile{res\_phases.dat}: $\varepsilon_\mathrm W$, $\varepsilon_\mathrm C$ (lower of graphite, diamond), $\varepsilon_\mathrm{W_2C}$; checks hex WC and rocksalt; $\varepsilon_\mathrm{WC} = E_\mathrm{bulk}/640$; $\Delta H_f$.
+\item Window: $\mu_\mathrm C^\mathrm{max} = \varepsilon_\mathrm C$; $\mu_\mathrm W^\mathrm{max} = \min(\varepsilon_\mathrm W, \varepsilon_\mathrm{W_2C}-\varepsilon_\mathrm{WC})$ if W2C is stable.
+\item \rfile{res\_defects.dat}: lowest minimum per candidate (vacancies: intact only); $C_i$, $W_i$ = lowest candidate.
+\item $\mu$-independent pairs and pair bindings.
+\item Conditions: W-rich, C-rich, mid; 50/50 at each $T$ (bisection on C/W = 1, clamped to the window); WC$_{1-y}$ at \cmd{--Tdef}.
+\item \wfile{ef\_summary.txt}, \wfile{ef\_conditions.csv}, \wfile{ef\_candidates.csv}, \wfile{ef\_vs\_mu.png}; with \cmd{--v3}: \wfile{he\_v\_formation.csv}.
+\end{enumerate}
+\end{multicols}
+
+% =====================================================================
+\sect{LAMMPS commands: what they do here and how to turn the knobs}
+% =====================================================================
+\up/\dn\ = increasing/decreasing the knob. ``Cost'' = wall time.
+
+\begin{xltabular}{\linewidth}{L{5.0cm} L{6.1cm} Y}
+\toprule
+\textbf{Command (as used)} & \textbf{Role in this model} & \textbf{Knob $\to$ impact} \\
+\midrule\endhead
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Setup}} \\
+\cmd{units metal} & eV, \AA, ps, K, bar, amu & none; every table and tolerance is in these units \\
+\cmd{atom\_style atomic} & positions, types, no charges & -- \\
+\cmd{boundary p p p} \newline \cmd{change\_box all boundary p p p} & fully periodic bulk (re-asserted after \cmd{read\_restart}) & \cmd{p p f} would add a surface: \emph{not} a bulk binding energy \\
+\cmd{lattice custom a a1 1 0 0 a2 0 \$\{blat\} 0 a3 0 0 \$\{clat\} basis …} & orthogonal WC cell: W at $(0,0,0)$, $(\tfrac12,\tfrac12,0)$; C at $(0,\tfrac23,\tfrac12)$, $(\tfrac12,\tfrac16,\tfrac12)$ & $a$, $c$ are only a starting guess (box/relax finds the 0\,K values); wrong basis = wrong phase \\
+\cmd{lattice bcc 3.1652} (benchmark) & bcc W, Ackland--Thetford $a_0$ & must be the potential's own $a_0$ or the cell is strained \\
+\cmd{read\_data phases/<name>.data} (\cmd{wc\_ef}) & reads a reference crystal written by \cmd{make\_ef.py} (3 atom types, \cmd{Atoms \# atomic}) & starting lattice only; box/relax finds the potential's own \\
+\cmd{region box block 0 8 0 5 0 8} \newline \cmd{create\_box 3 box}, \cmd{create\_atoms} & $8\times5\times8$ cells, 3 types (W, C, He) & bigger \up: less image interaction, cost $\propto N$; keep every edge $>2\times$ the longest cutoff; first thing to test for large clusters \\
+\cmd{mass 1 183.85} etc. & masses & affect MD speed only, never a 0\,K energy \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Interactions}} \\
+\cmd{pair\_style hybrid/overlay tersoff/zbl table linear 10000} & ABOP for the host, tables for every He pair, summed & \cmd{linear}\,$\to$\,\cmd{spline}: smoother forces; table points $N$ \up: less interpolation noise (CG reaches ftol more easily), more memory; $N$ \dn\ below $\sim$1000: force noise, CG stalls \\
+\cmd{pair\_coeff * * tersoff/zbl WCH.tersoff W C NULL} & maps types 1,2 to W, C; He excluded from bond order & order must match the type numbering; dropping \cmd{NULL} puts He in the ABOP (wrong) \\
+\cmd{pair\_coeff 1 3 table WHe.table WHe} (and \cmd{2 3}, \cmd{3 3}) & W--He, C--He, He--He & optional final argument = cutoff; default is the table's last point \\
+\cmd{neighbor 2.0 bin} & skin added to the cutoff & skin \up: fewer rebuilds, more pairs per step; skin \dn: risk of missed pairs during hot MD unless \cmd{check yes} \\
+\cmd{neigh\_modify every 1 delay 0 check yes} & rebuild whenever an atom moved $>$ skin/2 & safest setting; \cmd{delay} \up\ is faster but can miss pairs at 900\,K \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Minimisation (every reported energy)}} \\
+\cmd{min\_style cg} & Polak--Ribière conjugate gradient & \cmd{fire}: more robust from bad starts (overlapping He), usually slower to tight ftol; \cmd{sd}: slow; \cmd{hftn}: memory heavy \\
+\cmd{min\_modify line quadratic} & line search that uses forces near the minimum & reaches ftol $10^{-6}$ where the default \cmd{backtrack} stalls on round-off; \cmd{forcezero} is the alternative \\
+\cmd{minimize 0.0 1.0e-6 100000 1000000} & etol, ftol, maxiter, maxeval & \textbf{etol} = relative energy change; 0 disables it so ftol decides. \textbf{ftol} = $\|\mathbf F\|_2$ of all $3N$ components (eV/\AA), \emph{not} the max force: \dn\ tighter, more iterations, energy changes by $\ll$1\,meV below $10^{-4}$. \textbf{maxiter/maxeval}: if hit, the energy is not converged (check ``Stopping criterion'' in the log) \\
+\cmd{fix rel all box/relax x 0 y 0 z 0 couple xy vmax 0.001} (\cmd{in.bulk0} only) & relaxes cell edges to zero stress; \cmd{couple xy} keeps one hexagonal $a$ & \cmd{vmax} \up: faster, can oscillate; \cmd{couple none} lets $L_x\ne L_y$ (breaks $\sqrt3$ ratio); re-run \cmd{minimize} after \cmd{unfix} because the box energy term is gone \\
+\cmd{fix rel all box/relax iso 0.0 vmax 0.001} (cubic phases) \newline \cmd{fix rel all box/relax x 0.0 y 0.0 couple xy vmax 0.001} (graphite) & zero-stress reference crystals; graphite keeps $z$ fixed because the ABOP has no interlayer term & \cmd{z 0.0} on graphite would let $L_z$ drift (no force across layers) \\
+\cmd{fix hold grp setforce 0.0 0.0 0.0} (benchmark) & holds an atom (octahedral SIA, He at the tet--tet midpoint for $E_\mathrm{m}$) & removes those atoms from the force norm; a constrained, not a true, minimum \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Search MD (never an energy)}} \\
+\cmd{timestep 0.001} & 1\,fs & \up\ 2\,fs: faster, energy drift with light He at 900\,K; \dn: slower, no benefit for a search \\
+\cmd{velocity all create T seed rot no mom yes dist gaussian loop geom} & initial velocities at $T$ & \textbf{seed}: different trajectory (independent trials); \textbf{loop geom}: velocities from positions, so identical for any MPI count and for non-contiguous IDs (needed after \cmd{delete\_atoms}); \cmd{mom yes} zero net momentum \\
+\cmd{fix nve all nve} + \cmd{fix tb all temp/berendsen T T 0.1} & anneal at constant $T$ & \textbf{T} \up: crosses larger barriers, more He escape / host damage; \dn: stays near the start. \textbf{Tdamp} \dn\ ($<$0.05\,ps): stiff, unphysical coupling; \up\ ($>$1\,ps): slow to reach $T$ \\
+\cmd{fix tb all temp/berendsen T 1.0 0.1} & quench: ramps target $T\to1$\,K & longer quench \up: settles into a deeper basin before CG \\
+\cmd{run 5000} & 5\,ps anneal / quench & \up: more barrier crossings per trial, cost linear; $3\times(5+5)$\,ps per trial \\
+\cmd{run 0 post no} & refreshes thermo/computes without moving atoms & required before reading a compute in a variable between runs (29 Sep 2021 rule) \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Building each configuration}} \\
+\cmd{region v1 sphere x y z 0.5 units box} \newline \cmd{region vall union 2 v1 v2} & selects the atoms to remove & radius must be $<$ nearest-neighbour distance (W--C 2.196\,\AA) or two atoms go \\
+\cmd{group vac region vall}; \cmd{\$(count(vac))} & atoms that will be deleted & \cmd{nvac} must equal the number of sites (flag \cmd{NVAC}) \\
+\cmd{delete\_atoms group vac compress no} & makes the vacancies; keeps IDs & \cmd{compress yes} renumbers: breaks ID-based tracking \\
+\cmd{create\_atoms 3 single x y z units box} & inserts one He & -- \\
+\cmd{create\_atoms 1|2 single ...} (\cmd{wc\_ef}) & inserts the interstitial / antisite / dumbbell atoms & dumbbell half-length: C 0.70, W 1.10\,\AA \\
+\cmd{group host type 1 2} \emph{before} \cmd{create\_atoms}; \cmd{group added subtract all host} & static groups: the new atoms are not in \cmd{host} & displacement statistics stay on the original lattice atoms \\
+\cmd{region vall union N ...} & union of several vacancy spheres & needs $N\ge2$: a single site uses \cmd{group vac region v1} directly \\
+\cmd{region core sphere x y z r units box} & ``cluster'' region for \cmd{count(heg,core)} & $r$ = farthest site $+2.2$\,\AA; \up: escaped He still counted; \dn: He at the void edge miscounted \\
+\cmd{read\_restart wc\_bulk0.restart} & starts every cfg from the same relaxed bulk & pair coefficients of \cmd{hybrid}/\cmd{table} are re-issued after it \\
+\cmd{write\_restart} (benchmark \cmd{in.vgen}) & saves $V_m$ for the next step & re-initialises: computes become stale, so read them into variables \emph{before} it \\
+\cmd{clear} & resets the whole system for the next cfg & everything after it must be redefined \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Measurements}} \\
+\cmd{compute dsp host displace/atom} & displacement of each W/C atom from where it was when the compute was defined (perfect lattice) & -- \\
+\cmd{compute dmax host reduce max c\_dsp[4]} & largest host displacement (\cmd{dmax}) & -- \\
+\cmd{variable farv atom (c\_dsp[4]>1.0)} + \cmd{reduce sum} & host atoms moved $>1$\,\AA\ (\cmd{nfar}) & threshold \dn\ (0.7\,\AA): flags strongly relaxed but intact neighbours; \up\ (1.5\,\AA): misses Frenkel-pair mutations \\
+\cmd{compute pe/atom}, \cmd{reduce max} (benchmark) & finds the highest-energy W atom (JW vacancy rule) & ties broken by lowest ID \\
+\cmd{gyration(heg)}, \cmd{count(heg,core)}, \cmd{xcm()} & He radius of gyration, He inside core, centre of mass & -- \\
+\cmd{\$(xcm(added,x))} (\cmd{wc\_ef}) & where the added atom(s) ended up & 0 for vacancy cells (empty group) \\
+\cmd{\$(count(w))}, \cmd{\$(count(c))} (\cmd{in.phases}) & atoms of each species in a phase & energies per atom / per f.u. \\
+\cmd{thermo\_style custom step temp pe press c\_dmax c\_nfar} & makes the computes current at every output & a compute read between runs \emph{must} appear here \\
+\cmd{thermo\_modify norm no} & totals, not per-atom energies & \cmd{norm yes} would divide every energy by $N$ \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Script control}} \\
+\cmd{variable k loop 49 pad} / \cmd{label cfg} / \cmd{next k} / \cmd{jump SELF cfg} & flat loop over cfg files & \cmd{jump SELF} needs \cmd{lmp -in deck} (not \cmd{< deck}); \cmd{pad} gives 01, 02, … \\
+\cmd{variable k index 01 49} & test only cfgs 01 and 49 & quick syntax test \\
+\cmd{variable dname string Ci\_ch} & names the defect in the result line & -- \\
+\cmd{print "..." file f} vs \cmd{append f} & \cmd{file} starts the file, \cmd{append} adds a line & a second \cmd{file} would erase earlier results \\
+\cmd{\$(expr)}, \cmd{\$\{v\}}, \cmd{v\_name}, \cmd{\$(pe:\%.10f)} & immediate evaluation, substitution, reference, formatted output & \cmd{\$()} is evaluated when the line is read \\
+\cmd{include cfg/vw1\_\$\{k\}.lmp} & pulls in one configuration & -- \\
+\cmd{print "…" append res\_vw1.dat} & one result line per relaxation & -- \\
+\cmd{write\_dump all custom f id type x y z modify sort id} & snapshot of each minimum & for OVITO; not used by the analysis \\
+\cmd{shell mkdir dumps} & output folder & -- \\
+\bottomrule
+\end{xltabular}
+
+\Needspace{10\baselineskip}\subsection*{Script knobs}
+\begin{xltabular}{\linewidth}{L{3.4cm} L{2.4cm} Y}
+\toprule
+\textbf{Knob (file)} & \textbf{Value} & \textbf{Turn it $\to$ effect} \\
+\midrule\endhead
+\cmd{TRIALS} (make\_v3) & 4 & \up: fewer missed minima (\cmd{TRIALS-DIFFER}, \cmd{FOUND-ONCE} disappear), cost linear; 3 if the 3\,h limit is tight \\
+\cmd{TEMPS} (make\_v3) & 300, 614.6, 900 & add 1200\,K: crosses bigger barriers but more He escape / host damage; drop 900\,K: misses deep rearrangements \\
+\cmd{N\_HEAT}, \cmd{N\_QUENCH} & 5000, 5000 & \up: more sampling per trial; 3000 + 3000 cuts the cost 40\% \\
+\cmd{TAU} & 0.1\,ps & Berendsen $\tau$; see \cmd{temp/berendsen} above \\
+\cmd{SEED} & 31337 & changes every placement and velocity; rerun with a new seed to test convergence \\
+\cmd{NX, NY, NZ} & 8, 5, 8 & \up: smaller image interaction; regenerate \cmd{in.bulk0} too \\
+\cmd{R\_SITE} & W 1.4, C 0.9\,\AA & \up: He placed off-centre, more crowding with the host \\
+\cmd{HE\_HE\_MIN}, \cmd{HE\_HOST\_MIN} & 1.5, 1.5\,\AA & \dn: denser starts, risk of huge initial forces (CG can eject atoms) \\
+core radius & farthest site + 2.2\,\AA & sets what counts as ``escaped'' \\
+mutation threshold (deck) & 1.0\,\AA & see \cmd{farv} above \\
+\cmd{TOL} (analyze\_v3) & $10^{-3}$\,eV & what counts as reaching the same minimum (\cmd{hits}) \\
+\cmd{SPREAD\_WARN} & 0.10\,eV & spread of trial minima above which \cmd{TRIALS-DIFFER} is printed \\
+\cmd{RG\_JUMP} & 1.5\,\AA & $R_g-R_{g0}$ above which \cmd{SPREAD} is printed \\
+\rowcolor{rowg}\multicolumn{3}{l}{\textbf{Formation energies}} \\
+\cmd{--cell} (make\_ef) & 8 5 8 & 10 6 10 for the size check (new folder, new bulk run) \\
+\cmd{TEMPS}, \cmd{N\_HEAT}, \cmd{N\_QUENCH}, \cmd{SEED} (make\_ef) & as v3, 4242 & the anneal ladder for the defect cells \\
+\cmd{--T} (analyze\_ef) & 300 600 1000 1500 & temperatures of the 50/50 solve \\
+\cmd{--deficit}, \cmd{--Tdef} & 0.001 0.01 0.05; 1000\,K & C deficits $y$ for WC$_{1-y}$ \\
+\cmd{G} (analyze\_ef) & 1 (pairs 3, 6) & site multiplicity: concentrations $\times g$, $E_f$ unchanged \\
+\bottomrule
+\end{xltabular}
+
+\subsection*{29 Sep 2021 rules the decks follow}
+\begin{itemize}
+\item A compute used in a variable between runs must be current: put it in \cmd{thermo\_style} and read it straight after a \cmd{run 0}.
+\item \cmd{write\_restart} re-initialises the system: read every compute into a variable before it.
+\item \cmd{jump SELF} only works with \cmd{-in}; one file per case, flat loop, no \cmd{if/else}, no \cmd{\&} continuations.
+\item After \cmd{delete\_atoms … compress no} IDs have gaps, so \cmd{velocity … loop geom}.
+\end{itemize}
+
+% =====================================================================
+\sect{Equations}
+% =====================================================================
+$E(X)$ = relaxed total energy of a cell containing defect $X$ (same box as $\Eblk$).
+$\He_1$ = one interstitial He at the reference site. $X$ = vacancy cluster with $n_\mathrm{W}$ W and $n_\mathrm{C}$ C sites; $X'$ = its parent (one site fewer).
+
+\subsection{WC (\texttt{analyze\_v3.py})}
+\begin{align}
+E_\mathrm{sol} &= E(\He_1) - \Eblk \\
+\Eb(\He\to\He_nX) &= E(\He_{n-1}X) + E(\He_1) - E(\He_nX) - \Eblk \\
+\Eb(V_s\to\He_nX) &= E(\He_nX') + E(V_s) - E(\He_nX) - \Eblk, \qquad E(V_s)=E(\text{empty vw1 or vc1}) \\
+\Eb^\mathrm{tot}(\He_nX) &= n_\mathrm{W}E(V_\mathrm{W}) + n_\mathrm{C}E(V_\mathrm{C}) + nE(\He_1) - E(\He_nX) - (n_\mathrm{W}+n_\mathrm{C}+n-1)\Eblk \\
+E_\mathrm{int}(d) &= E(\He\text{--}\He\ \text{pair at } d) + \Eblk - 2E(\He_1) \qquad (\text{positive = repulsive})
+\end{align}
+For $n=0$, $\Eb^\mathrm{tot}$ is the binding of the empty cluster against isolated vacancies (positive = vacancies attract).
+Every expression has the same number of each species on both sides, so the chemical potentials cancel.
+
+\textbf{Selection.} For each (cluster, $n$): $E = \min\{E_{t,c} : n_\mathrm{far}=0\}$ over trials $t$ and cycles $c$ (if none is intact, the overall minimum, flagged \cmd{ALL-MUTATED}).
+\begin{align*}
+\text{hits} &= \#\{(t,c): E_{t,c}-E < \text{TOL}\}, &
+\text{spread} &= \max_t\big(\min_c E_{t,c}\big) - E, \\
+\text{MUTATED-STATE-LOWER-BY} &= E - \min_{\text{all}} E_{t,c}\ (\text{if}>\text{TOL}), &
+\text{ESCAPED} &: k_\mathrm{in} < n, \qquad \text{SPREAD}: R_g - R_{g0} > 1.5\,\text{\AA}.
+\end{align*}
+
+\subsection{Diagnostics computed in the decks}
+\begin{align*}
+d_i &= |\mathbf r_i - \mathbf r_i^{0}| \ (\text{host atom } i), &
+d_\mathrm{max} &= \max_i d_i, &
+n_\mathrm{far} &= \textstyle\sum_i [\,d_i > 1\,\text{\AA}\,], \\
+R_g &= \Big(\tfrac1{n}\textstyle\sum_j |\mathbf r_j - \mathbf r_\mathrm{cm}|^2\Big)^{1/2}\ (\text{He}), &
+k_\mathrm{in} &= \#\{\He \in \text{core}\}, &
+r_\mathrm{core} &= \max_s|\mathbf s - \bar{\mathbf s}| + 2.2\,\text{\AA}.
+\end{align*}
+
+\subsection{Geometry (\texttt{make\_v3.py})}\label{sec:geom}
+\begin{itemize}
+\item Minimum image: $\Delta x \leftarrow \Delta x - L_x\,\mathrm{round}(\Delta x/L_x)$ (same for $y,z$); distances use it everywhere.
+\item Cluster growth: the new site of species $s$ is the free lattice site minimising $\sum_{\mathbf p\in X'} |\mathbf r-\mathbf p|$ (compact; ties $\to$ lowest coordinates). For \cmd{vw2} this gives the c-axis neighbour (2.815\,\AA, since $c<a$); \cmd{vw2a} is restricted to the same basal plane (2.919\,\AA).
+\item He placement: uniform in spheres of radius $R_\mathrm{site}$ around the vacated sites, accepted if every He--He $\ge1.5$\,\AA\ and He--host $\ge1.5$\,\AA; on failure the limits relax stepwise (He--He to 1.0, He--host to 1.2\,\AA, radius $+0.2$, $+0.4$, $+0.6$\,\AA).
+\item Positions are written in lattice-cell units of the restart box, $x = x_\mathrm{lo} + f_x L_x/N_x$ ($N_x=8$), so they follow the relaxed cell exactly.
+\end{itemize}
+
+\subsection{bcc-W benchmark (JW 2013 conventions)}
+\begin{align}
+E_\mathrm f(V) &= E(V) - \tfrac{N-1}{N}\Eblk, \qquad E_\mathrm f(\mathrm{SIA}) = E(\mathrm{SIA}) - \tfrac{N+1}{N}\Eblk \\
+E_\mathrm f(\He,X) &= E(\He X) - E(X) - \varepsilon_\He \quad(\varepsilon_\He = 0 \text{ isolated, or } -0.00538\text{ eV fcc He}) \\
+E_\mathrm f(\He_nV_m) &= E - (N-m)\,\varepsilon_\mathrm W - n\,\varepsilon_\He \quad\text{(JW eq.~4: formation vs bulk W and fcc He)} \\
+\Eb(A\to B) &= E_\mathrm f(A) + E_\mathrm f(B) - E_\mathrm f(AB) \quad\text{(JW eq.~5; identical to the total-energy form when atoms balance)} \\
+E_\mathrm m &\approx E(\He \text{ held at tet--tet midpoint}) - E(\He_\mathrm{tet}), \qquad E_\mathrm{dt} = \Eb + E_\mathrm m
+\end{align}
+Vacancy-cluster rule (JW): relax $V_m$, compute per-atom energy, remove the W atom with the highest energy (ties $\to$ lowest ID), relax $\to V_{m+1}$.
+Benchmark score: $\mathrm{MAE} = \frac1N\sum|E^\text{this}-E^\text{JW}|$ = 0.015\,eV ($N$=46), max 0.072\,eV.
+
+\subsection{Formation energies (\texttt{analyze\_ef.py})}\label{sec:ef}
+$\Delta E(d) = E(d) - E_\mathrm{bulk}$; $d_\mathrm W$, $d_\mathrm C$ = atoms \emph{added} (a vacancy has $-1$).
+\begin{align}
+E_f(d) &= \Delta E(d) - d_\mathrm W\,\mu_\mathrm W - d_\mathrm C\,\mu_\mathrm C, \qquad \mu_\mathrm W + \mu_\mathrm C = \varepsilon_\mathrm{WC} = E_\mathrm{bulk}/N_\mathrm{f.u.} \\
+\mu_\mathrm C &\le \varepsilon_\mathrm C, \qquad \mu_\mathrm W \le \min\!\big(\varepsilon_\mathrm W,\ \varepsilon_\mathrm{W_2C}-\varepsilon_\mathrm{WC}\big)\ \ (\text{W2C term only if } \varepsilon_\mathrm{W_2C} < \varepsilon_\mathrm{WC}+\varepsilon_\mathrm W) \\
+\Delta H_f(\mathrm{WC}) &= \varepsilon_\mathrm{WC} - \varepsilon_\mathrm W - \varepsilon_\mathrm C \quad(= \text{window width when bcc W sets the W-rich limit}) \\
+E_S &= \Delta E(V_\mathrm W) + \Delta E(V_\mathrm C) + \varepsilon_\mathrm{WC}, \quad E_{FP}^\mathrm C = \Delta E(V_\mathrm C) + \Delta E(C_i), \quad \Eb(X{+}Y) = E_f(X) + E_f(Y) - E_f(XY) \\
+c_d &= g_d\,\frac{e^{-E_f/k_BT}}{1+e^{-E_f/k_BT}}, \qquad
+\frac{N_\mathrm C}{N_\mathrm W} = \frac{1 - c_{V_\mathrm C} + c_{C_i} - c_{W_\mathrm C} + c_{C_\mathrm W} - 2c_{V_\mathrm C^2} - c_{V_\mathrm WV_\mathrm C}}{1 - c_{V_\mathrm W} + c_{W_i} + c_{W_\mathrm C} - c_{C_\mathrm W} - c_{V_\mathrm WV_\mathrm C}} \\
+\text{50/50:}\ \ \frac{N_\mathrm C}{N_\mathrm W}(\mu_\mathrm C, T) &= 1, \qquad \text{WC}_{1-y}:\ \ \frac{N_\mathrm C}{N_\mathrm W}(\mu_\mathrm C, T) = 1-y \quad(\text{bisection; } N_\mathrm C/N_\mathrm W \text{ rises with } \mu_\mathrm C) \\
+E_f(\He_nX) &= E(\He_nX) - E_\mathrm{bulk} + n_\mathrm W\mu_\mathrm W + n_\mathrm C\mu_\mathrm C \quad(\mu_\He = 0:\ \text{He from vacuum})
+\end{align}
+
+\subsection{Dynamics used by the search}
+\begin{align*}
+\text{Berendsen:}\quad \lambda &= \Big[1 + \tfrac{\Delta t}{\tau}\Big(\tfrac{T_\mathrm{target}}{T} - 1\Big)\Big]^{1/2},\ \mathbf v\leftarrow\lambda\mathbf v; &
+\text{quench:}\quad T_\mathrm{target}(t) &= T + (1 - T)\,t/t_\mathrm{run}; \\
+T &= \frac{2E_\mathrm{kin}}{(3N-3)\,k_\mathrm{B}}; &
+\text{CG stop:}\quad \|\mathbf F\|_2 &= \Big(\textstyle\sum_{i=1}^{N}|\mathbf F_i|^2\Big)^{1/2} < \text{ftol}.
+\end{align*}
+
+% =====================================================================
+\sect{Glossary}
+% =====================================================================
+\begin{multicols}{2}
+\small
+\begin{description}[leftmargin=0pt,itemsep=1.5pt]
+\item[ABOP / Tersoff] analytical bond-order potential: bond strength depends on the local environment. \cmd{tersoff/zbl} adds a screened-Coulomb (ZBL) wall at short range.
+\item[hybrid/overlay] several pair styles summed for the same atom pairs; here host ABOP + He tables.
+\item[Pair table] potential given as $E(r)$, $F(r)$ points; LAMMPS interpolates (\cmd{linear}, $N$ points).
+\item[$E_\mathrm{bulk}$] energy of the perfect relaxed cell, same box as every defect cell.
+\item[Solution energy $E_\mathrm{sol}$] cost of putting one He from vacuum into the perfect lattice.
+\item[Formation energy] energy of a defect relative to reference reservoirs (bulk W/WC, He). In WC needs $\mu_\mathrm W,\mu_\mathrm C$.
+\item[Binding energy $\Eb$] energy released when two defects combine; positive = bound.
+\item[Interaction energy $E_\mathrm{int}$] pair energy relative to two isolated He; positive = repulsive.
+\item[Trap] defect that lowers He energy (vacancy, vacancy cluster).
+\item[Capacity] largest $n$ with $\Eb(\He\to\He_{n-1}X)>0$.
+\item[Trap mutation] He pressure pushes a host atom off its site, making a Frenkel pair; detected by $n_\mathrm{far}>0$.
+\item[Channel / trigonal-prismatic site] empty prism between W layers in WC (one per C), stacked along $c$; lowest-energy interstitial He site.
+\item[$V_\mathrm W$, $V_\mathrm C$] W, C vacancy; $(V_\mathrm W)_2$ c-axis or in-plane divacancy; $V_\mathrm WV_\mathrm C$ mixed.
+\item[Tetrahedral / octahedral (bcc)] interstitial sites in W; He prefers tetrahedral.
+\item[SIA] self-interstitial atom (in W the $\langle111\rangle$ dumbbell/crowdion).
+\item[Constant-volume convention] defect cells keep the bulk box; standard for binding energies (JW).
+\item[CG] conjugate-gradient minimisation; \textbf{line search} picks the step along each direction.
+\item[ftol / etol] force (2-norm, eV/\AA) and relative energy stopping criteria.
+\item[Anneal / quench] heat at $T$ to cross barriers, then cool to $\sim$1\,K before CG.
+\item[Berendsen thermostat] rescales velocities toward a target $T$ with time constant $\tau$; good for searching, not for sampling.
+\item[Configuration search] finding the lowest-energy arrangement of He (and host) among many local minima.
+\item[Trial] one independent random He placement; \textbf{cycle} 1--4 = relaxation as placed / after 300 / 614.6 / 900\,K.
+\item[hits] relaxations reaching the reported minimum within 1\,meV.
+\item[Intact] no host atom moved $>1$\,\AA.
+\item[$k_\mathrm{in}$, core] He inside the sphere (farthest site $+2.2$\,\AA); fewer than $n$ = escaped.
+\item[$d_\mathrm{max}$, $n_\mathrm{far}$] largest host displacement; host atoms moved $>1$\,\AA.
+\item[$R_g$] He radius of gyration; jump vs start = He spread out.
+\item[Minimum image] shortest vector between two points under periodic boundaries.
+\item[Restart file] binary snapshot of box, atoms and settings (\cmd{wc\_bulk0.restart}).
+\item[Compute currency] (29 Sep 2021) computes are only valid on the timestep they were last evaluated.
+\item[\cmd{loop geom}] velocities generated from positions, independent of IDs and MPI ranks.
+\item[Migration energy $E_\mathrm m$] barrier for a jump; \textbf{detrapping} $E_\mathrm{dt}=\Eb+E_\mathrm m$.
+\item[NEB] nudged elastic band: finds the minimum-energy path and barrier between two minima.
+\item[DFT column] \cmd{YES} must, \cmd{rec} recommended, \cmd{check} compare with literature, \cmd{no} not needed.
+\item[MAE] mean absolute error against the JW reference values.
+\item[JW 2013] Juslin \& Wirth, J.\ Nucl.\ Mater.\ 432 (2013) 61 -- the benchmark.
+\item[Chemical potential $\mu_s$] energy per atom of the reservoir that exchanges species $s$ with the crystal; sets formation energies.
+\item[W-rich / C-rich limit] WC in equilibrium with bcc W (or W2C) / with graphite: the two ends of the $\mu$ window.
+\item[Formation enthalpy $\Delta H_f$] energy of WC relative to bcc W + graphite; the width of the $\mu$ window.
+\item[Convex hull / coexistence] the set of stable phases; at a two-phase boundary both phases fix $\mu$.
+\item[Schottky pair] one $V_\mathrm W$ + one $V_\mathrm C$: removes a whole formula unit, so independent of $\mu$.
+\item[Frenkel pair] vacancy + interstitial of the same species.
+\item[Antisite] an atom on the other species' site ($W_\mathrm C$, $C_\mathrm W$).
+\item[Dumbbell] two atoms sharing one lattice site, split along a direction.
+\item[Site fraction $c_d$] defects per formula unit at equilibrium (dilute: $\ll1$).
+\item[50/50 (stoichiometric) $\mu$] the $\mu_\mathrm C$ at which equilibrium defects keep C/W = 1; clamped to the window if impossible.
+\item[Mid-window] the midpoint of the $\mu_\mathrm C$ window, a common convention.
+\item[WC$_{1-y}$] C-deficient WC; beyond the W-rich limit it is a non-equilibrium (e.g.\ sputter-depleted) state.
+\item[Reference phase] crystal that fixes a chemical potential, computed with the same potential.
+\end{description}
+\end{multicols}
+
+
+% =====================================================================
+\sect{Renders of the simulation cells}
+% =====================================================================
+Ray-traced with OVITO (\cmd{scripts/renders.py}); your own relaxed minima can be drawn the same way with
+\cmd{scripts/render\_dump.py dumps/<file> --cfg cfg/<file>}. W gray, C blue, He yellow, vacancy red, added atom green.
+
+\begin{center}
+\includegraphics[width=\linewidth]{../renders/R1_wc_supercell.png}\\[0.6em]
+\includegraphics[width=0.92\linewidth]{../renders/R2_v3_clusters.png}
+\end{center}
+\begin{center}
+\includegraphics[width=0.8\linewidth]{../renders/R3_reference_phases.png}\\[0.6em]
+\includegraphics[width=\linewidth]{../renders/R4_point_defects.png}
+\end{center}
+
+\end{document}

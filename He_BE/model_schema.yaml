@@ -1,0 +1,299 @@
+# =====================================================================
+# model_schema.yaml -- He in WC (and the bcc-W benchmark): every input,
+# every process step, every output, with expected values and limits.
+#
+# Machine-readable on purpose: a methods table or a check script can be
+# built straight from it.  Values are those of the v3 package (he_be_v3)
+# unless marked otherwise.  Outputs are the v3 results (vacancy clusters)
+# and the deterministic v2 values (interstitial, pair).
+#
+# sensitivity:  what happens to the OUTPUTS if this input is changed
+#   none    -> cannot change any reported number (bookkeeping only)
+#   low     -> < 0.01 eV
+#   medium  -> 0.01 - 0.1 eV
+#   high    -> > 0.1 eV, or changes a conclusion
+# =====================================================================
+
+model:
+  name: He solution, clustering and vacancy trapping in WC
+  method: 0 K molecular statics with a stochastic configuration search
+  code: LAMMPS 29 Sep 2021 Update 3 (cluster module lammps/29Sep2021_intel)
+  every_reported_energy_is: a conjugate-gradient minimum at 0 K
+  md_is_used_for: searching between minima only (never an energy)
+
+# ---------------------------------------------------------------------
+inputs:
+
+  potentials:
+    - id: host
+      file: WCH.tersoff
+      pair_style: tersoff/zbl
+      describes: [W-W, W-C, C-C]
+      source: Juslin et al., J. Appl. Phys. 98 (2005) 123520 (analytical bond-order potential)
+      notes: He mapped to NULL (closed shell, no bond order)
+      sensitivity: high   # sets lattice, vacancy and cluster energetics; untested for WC vacancy clusters
+    - id: W-He
+      file: WHe.table
+      pair_style: table linear 10000
+      keyword: WHe
+      range_A: [1.0e-6, 3.25]
+      source: Juslin & Wirth, J. Nucl. Mater. 432 (2013) 61 (implementation K.D. Hammond; identical data to LAMMPS potentials/W_He_JW2013.table)
+      validated_by: bcc-W benchmark (He formation and binding energies within 0.02-0.07 eV of JW 2013)
+      sensitivity: high   # fitted to bcc W, not to WC
+    - id: C-He
+      file: CHe.table
+      pair_style: table linear 10000
+      keyword: CHe
+      range_A: [0.005, 8.0]
+      source: group-internal table (Li Yang), repaired for this work
+      repair: LJ tail (sigma 2.524 A, eps 16.0 meV) fitted beyond 3.6 A, switched to 0 between 6 and 8 A; core extended below 0.1 A
+      sensitivity: high   # no independent validation; sets He energetics near C and in V_C
+    - id: He-He
+      file: HeHe.table
+      pair_style: table linear 10000
+      keyword: HeHe
+      range_A: [0.00076, 3.8]
+      source: Beck, Mol. Phys. 14 (1968) 311, short range by Morishita et al., NIMB 202 (2003) 76
+      validated_by: close-packed He -0.00538 eV/atom (JW 2013 quotes 0.0054)
+      sensitivity: medium
+
+  structure:
+    phase: hexagonal WC (P-6m2), orthogonal representation
+    basis_fractional:
+      W: [[0, 0, 0], [0.5, 0.5, 0]]
+      C: [[0, 0.6667, 0.5], [0.5, 0.1667, 0.5]]
+    a_A: 2.91862          # relaxed at 0 K (in.bulk0)
+    c_A: 2.81498
+    c_over_a: 0.96449     # experiment ~0.976
+    E_coh_eV_per_atom: -8.33007
+    supercell: [8, 5, 8]  # orthogonal cells
+    atoms: 1280
+    box_A: [23.35, 25.28, 22.52]
+    boundary: p p p
+    sensitivity:
+      supercell: medium   # image interactions; check at 10x6x10
+      lattice: none       # always the potential's own 0 K value
+
+  references:
+    E_bulk_eV: -10662.4900860       # checkpoint, must agree to ~1e-6
+    He_reference_site:
+      name: trigonal-prismatic channel
+      fractional_in_cell: [0.5, 0.8333, 0.5]   # of cell (4,2,4)
+      E_sol_eV: 3.909143                       # checkpoint
+    vacancy_references: [vw1 n=0 (V_W), vc1 n=0 (V_C)]
+
+  relaxation:
+    bulk_cell:
+      command: fix box/relax x 0.0 y 0.0 z 0.0 couple xy vmax 0.001
+      tolerances: {etol: 1.0e-16, ftol: 1.0e-16}
+    defect_cells:
+      volume: fixed at the bulk value (constant-volume convention)
+      min_style: cg
+      line_search: quadratic
+      tolerances: {etol: 0.0, ftol_eV_per_A: 1.0e-6, maxiter: 100000, maxeval: 1000000}
+      ftol_meaning: 2-norm of the global force vector (not the max component)
+      sensitivity: low
+
+  configuration_search:
+    trials_per_cluster_and_n: 4         # TRIALS in make_v3.py (1 for empty clusters)
+    anneal_ladder_K: [300.0, 614.6, 900.0]
+    anneal_steps: 5000                  # N_HEAT, 1 fs timestep -> 5 ps
+    quench_steps: 5000                  # N_QUENCH, Berendsen ramp T -> 1 K
+    thermostat: temp/berendsen + nve, tau 0.1 ps
+    relaxations_per_trial: 4            # as placed, after each of the 3 anneals
+    selection: lowest E among relaxations with nfar = 0
+    seed: 31337
+    sensitivity: high                   # under-searching overestimates E -> wrong E_b (v2 showed up to 1.5 eV)
+
+  he_placement:
+    region: within R of a vacated site
+    R_A: {W_site: 1.4, C_site: 0.9}
+    min_He_He_A: 1.5        # relaxed stepwise to >= 1.0 only if crowded
+    min_He_host_A: 1.5      # relaxed stepwise to >= 1.2 only if crowded
+    extra_radius_A: [0.0, 0.2, 0.4, 0.6]  # last resort for crowded voids
+    sensitivity: low        # the anneal ladder removes memory of the start
+
+  clusters:   # each = parent + one site; vacancy binding compares with the parent
+    - {id: vw1,   sites: V_W,               parent: null,  He: [0, 12]}
+    - {id: vw2,   sites: 2 V_W (c-axis),    parent: vw1,   He: [0, 12]}
+    - {id: vw2a,  sites: 2 V_W (in-plane),  parent: vw1,   He: [0, 12]}
+    - {id: vw3,   sites: 3 V_W,             parent: vw2,   He: [0, 12]}
+    - {id: vc1,   sites: V_C,               parent: null,  He: [0, 4]}
+    - {id: vwc,   sites: V_W + V_C,         parent: [vw1, vc1], He: [0, 10]}
+    - {id: vwc2,  sites: V_W + 2 V_C,       parent: vwc,   He: [0, 10]}
+    - {id: vw2c2, sites: 2 V_W + 2 V_C,     parent: vwc2,  He: [0, 12]}
+
+  diagnostics:
+    mutation_threshold_A: 1.0     # host atom displaced more than this -> nfar > 0
+    core_sphere_A: "max site distance from centroid + 2.2"
+    same_minimum_eV: 0.001
+    trial_spread_warning_eV: 0.10
+    rg_jump_A: 1.5
+
+# ---------------------------------------------------------------------
+process:   # schematics/S1 shows it as a diagram
+  - step: in.bulk0
+    does: "build 8x5x8 WC, relax the box at 0 K"
+    writes: "wc_bulk0.restart, E_bulk"
+  - step: in.ref
+    does: "one He at the channel site, CG"
+    writes: "res_ref.dat (E_bulk, E_He1) -> E_sol"
+  - step: make_v3.py
+    does: "build clusters (parent + one site), place He at random (TRIALS per n)"
+    writes: "cfg/, in.<series>, series.json"
+  - step: in.<series>
+    does: "per cfg: delete sites, add He, CG; anneal 300 / 614.6 / 900 K, quench, CG after each"
+    writes: "res_<series>.dat, dumps/"
+  - step: analyze_v3.py
+    does: "lowest intact minimum per (cluster, n); binding energies; flags; DFT priority"
+    writes: "binding_v3.csv, clusters_v3.csv"
+  - step: plot_v3.py
+    does: "figures"
+    writes: "figures_v3/"
+
+# ---------------------------------------------------------------------
+outputs:   # v3 results (Oct 2026); interstitial and pair values unchanged from v2
+  - symbol: "E_sol"
+    meaning: "He solution energy, channel site"
+    expected: "3.909 eV"
+    status: "final"
+  - symbol: "E_sol_meta"
+    meaning: "metastable site near C"
+    expected: "7.302 eV"
+    status: "final"
+  - symbol: "E_int(d)"
+    meaning: "He-He pair interaction (negative = attractive)"
+    expected: "-0.070 at 2.815 A (same channel); -0.036 at 2.92 A; +0.018 at 4.05 A; within +-0.003 beyond 5 A"
+    status: "final"
+  - symbol: "Eb(He -> He_n), interstitial"
+    meaning: "interstitial clustering"
+    expected: "0.07 eV (chain); 0.02-0.10 eV (bundle)"
+    status: "final"
+  - symbol: "Eb(He -> V_W)"
+    meaning: "He trapped by a W vacancy"
+    expected: "3.36 eV"
+    status: "final (v3)"
+  - symbol: "Eb(He -> V_C)"
+    meaning: "He trapped by a C vacancy"
+    expected: "0.49 eV; further He sit in the surrounding channels (0.05-0.35 eV)"
+    status: "final (v3)"
+  - symbol: "Eb(He -> He_{n-1} V_W)"
+    meaning: "filling a W vacancy"
+    expected: "1.82, 1.57, 1.62, 1.23, 1.28 eV (n=2-6); 0.12 (n=7); 0.42, 0.53 (n=8-9); -0.18, -0.14 (n=10-11)"
+    status: "final (v3); n=7 dip reproducible, arrangement to be identified"
+  - symbol: "capacity(V_W)"
+    meaning: "last n with Eb > 0"
+    expected: "9 He"
+    status: "final (v3)"
+  - symbol: "Eb(He -> empty multi-vacancy cluster)"
+    meaning: "first He into a larger cluster"
+    expected: "3.85 (c-axis V_2, V_3); 3.41 (in-plane V_2); 3.41-3.57 (mixed); all below E_sol = 3.91"
+    status: "final (v3)"
+  - symbol: "Eb(He) in multi-vacancy clusters"
+    meaning: "He filling of V_2, V_3 and mixed clusters"
+    expected: "stays positive within the range studied (min 0.91 c-axis V_2 at 5.5 He/V, 0.29 V_W V_C at 4 He/V)"
+    status: "final (v3)"
+  - symbol: "Eb(V_W -> V_W), empty"
+    meaning: "W divacancy"
+    expected: "-0.98 eV (c-axis), -0.36 eV (in-plane, the lower pair)"
+    status: "final (v3)"
+  - symbol: "Eb_tot, empty (V_W)_3"
+    meaning: "W trivacancy vs isolated vacancies"
+    expected: "-1.29 eV"
+    status: "final (v3)"
+  - symbol: "Eb_tot, empty mixed clusters"
+    meaning: "vs isolated vacancies"
+    expected: "+0.38 (V_W V_C), +0.42 (V_W (V_C)_2), +1.69 ((V_W)_2 (V_C)_2)"
+    status: "final (v3); DFT check of V_W V_C needed"
+  - symbol: "preferred W divacancy"
+    meaning: "c-axis minus in-plane energy"
+    expected: "in-plane lower for n <= 2 (by 0.62, 0.18, 0.11 eV); c-axis lower from n = 3 (by 0.13-1.07 eV)"
+    status: "final (v3)"
+  - symbol: "Eb(V -> He_n V_m)"
+    meaning: "vacancy binding to He-filled clusters"
+    expected: "W clusters: positive from ~1 He/V, 12.4 eV at 6 He/V; V_W to clusters with V_C: 3.3-9.2 eV; V_C: 0.04-2.1 eV"
+    status: "final (v3)"
+  - symbol: "trap mutation"
+    meaning: "host atom ejected by He pressure"
+    expected: "none; max host displacement 0.39 A in 344 configurations"
+    status: "final (v3)"
+  - symbol: "search convergence"
+    meaning: "relaxations reaching the reported minimum"
+    expected: "median 12/16; trial spread <= 0.09 eV; v2 values reproduced within 0.04 eV"
+    status: "final (v3)"
+  - symbol: "DFT column"
+    meaning: "which rows need DFT before they can be trusted"
+    expected: "YES / rec / check / no"
+    status: "analyze_v3.py"
+
+# ---------------------------------------------------------------------
+limitations:
+  - id: transferability
+    what: W-He and C-He pair potentials were not fitted to WC
+    affects: E_sol, He-He, He-V energies
+    size: unknown; possibly tenths of an eV
+    mitigation: DFT for ~12-15 small cells (<= 2 vacancies, <= 4 He)
+  - id: host_potential
+    what: ABOP vacancy and divacancy energetics in WC not checked against DFT
+    affects: vacancy binding, sign of Eb(V+V)
+    mitigation: compare V_W, V_C, V_W V_C energies with published DFT
+  - id: zero_kelvin
+    what: static energies, no vibrational entropy or zero-point energy
+    affects: weak bonds (He-He ~0.07 eV) most; eV-scale trapping barely
+    mitigation: quasi-harmonic correction (dynamical_matrix) if needed
+  - id: cluster_geometry
+    what: one vacancy arrangement per cluster size; only He positions searched
+    affects: empty and mixed cluster binding (other isomers may bind more)
+    mitigation: enumerate vacancy arrangements of the empty clusters (CG only, cheap)
+  - id: search
+    what: stochastic search can miss the global minimum
+    affects: crowded clusters (high He/V); shows as TRIALS-DIFFER / FOUND-ONCE
+    mitigation: more trials, longer or hotter anneals
+  - id: cell_size
+    what: one 1280-atom cell
+    affects: strain-field image interactions, large clusters most
+    mitigation: repeat key rows at 10x6x10 (2400 atoms)
+  - id: chemical_potential
+    what: vacancy formation energies in a compound depend on mu_W, mu_C
+    affects: equilibrium vacancy concentrations (not reported)
+    note: every reported binding energy is independent of mu
+  - id: no_kinetics
+    what: binding energies only, no migration barriers
+    affects: detrapping energy E_dt = Eb + Em, desorption temperatures
+    mitigation: NEB along and between channels, He-V detrapping paths
+  - id: version_lock
+    what: decks follow LAMMPS 29Sep2021 rules (compute currency between runs)
+    affects: portability to other LAMMPS versions (newer is more permissive, so decks still run)
+
+# ---------------------------------------------------------------------
+formation_energies:   # wc_ef package, Oct 2026 (same potential and cell as v3)
+  reference_phases:
+    eps_WC_eV_per_fu: -16.660141
+    eps_W_bcc_eV: -8.890096          # a = 3.16496 A
+    eps_C_graphite_eV: -7.361187     # graphene in this ABOP (no interlayer term); diamond +0.045
+    W2C_vs_WC_plus_W_eV: +1.5917     # unstable in this potential -> bcc W sets the W-rich limit
+    rocksalt_WC_above_hex_eV: +0.9835
+    dH_f_WC_eV: -0.4089              # expt. about -0.42
+  mu_C_window_eV: [-7.7700, -7.3612] # W-rich, C-rich
+  point_defects_Ef_eV:               # [W-rich, C-rich]
+    V_W: [3.670, 3.261]
+    V_C: [0.523, 0.932]
+    C_i_channel: [3.223, 2.814]      # same site as He
+    W_i: [12.336, 12.745]
+    W_on_C: [9.215, 10.033]
+    C_on_W: [6.751, 5.933]           # relaxes into a V_W + C_i pair bound by 0.14 eV
+  mu_independent_eV:
+    schottky_isolated: 4.193         # DFT about 4.1
+    C_frenkel: 3.746                 # DFT 3.80
+    W_frenkel: 16.006                # DFT 15.72
+    antisite_pair: 15.966
+  pair_binding_eV:
+    V_C_V_C_c_axis: -0.461           # repel
+    V_C_V_C_in_plane: -0.252         # repel
+    V_W_V_C: +0.380
+  conditions:
+    fifty_fifty: "not reachable inside the window (V_C always dominates); clamps to the C-rich limit"
+    W_rich_1000K_C_over_W: 0.99769
+    C_rich_1000K_C_over_W: 0.99998
+    WC_1-y_1000K: "y = 0.001 inside the window; y = 0.01, 0.05 lie 0.13, 0.27 eV beyond the W-rich limit (non-equilibrium)"
+  outputs: [ef_summary.txt, ef_conditions.csv, ef_candidates.csv, ef_vs_mu.png, he_v_formation.csv]

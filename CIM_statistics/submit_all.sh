@@ -1,34 +1,16 @@
 #!/bin/bash
 # =====================================================================
-# submit_all.sh - submit every seed folder that is waiting to run.
+# submit_all.sh - submit every seed folder waiting to run (no 'submitted'
+# file, no log.lammps) as ONE array job of at most -j tasks; each task
+# runs its seeds one after another.  A summary job follows.
 #
-# It scans runs/*/seed_b*_s*/ (or only the run folders you name) for
-# seeds that were never submitted (no 'submitted' file) and never started
-# (no log.lammps), splits them into at most -j jobs, and submits ONE array
-# job.  Each array task runs its seeds one after the other.  A summary job
-# follows when the whole array has ended.
-#
-#   ./submit_all.sh                    one array task per seed (if your queue allows it)
-#   ./submit_all.sh -j 1               ALL waiting seeds in a single job, one after another
-#   ./submit_all.sh -j 5               5 jobs, seeds shared out evenly
-#   ./submit_all.sh -j 5 -r 2          5 jobs, at most 2 running at the same time
-#   ./submit_all.sh -t                 test: only the first waiting seed, no summary
+#   ./submit_all.sh -t                 test: first waiting seed only
+#   ./submit_all.sh -j 5 [-r 2]        5 jobs (at most 2 running at once)
 #   ./submit_all.sh -j 3 runs/WC_basal_C_100eV runs/WC_prism_100eV
-#
-# Options
-#   -j N        number of jobs (array tasks) to use; default = one per seed
-#   -r N        at most N of them running at once (sbatch --array=...%N)
-#   -T HH:MM:SS wall time per job.  A job running K seeds needs K x (time of
-#               one seed); without -T the #SBATCH -t of run_replicas.slurm is used.
-#   -n          no summary job (saves one submission; run
-#               python3 summarize_replicas.py yourself later)
-#   -t          test: submit only the first waiting seed, without a summary
-#   -d          dry run: print what would be submitted, submit nothing
-#
-# Your queue's submission limit counts every array task as a job, so use
-# -j to stay under it (the summary job counts as one more unless -n).
-# Check the limit with:  sacctmgr show assoc user=$USER format=user,maxsubmit
-#                        sacctmgr show qos format=name,maxsubmitpu
+#     -T HH:MM:SS  wall time per job (K seeds need K x one seed)
+#     -n           no summary job       -d  dry run
+# Every array task counts toward the submission limit:
+#   sacctmgr show assoc user=$USER format=user,maxsubmit
 # =====================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -39,7 +21,7 @@ while getopts "j:r:T:ntdh" opt; do
   case $opt in
     j) NJ=$OPTARG ;; r) MAXRUN=$OPTARG ;; T) WALL=$OPTARG ;;
     n) SUMMARY=0 ;; t) TEST=1; SUMMARY=0 ;; d) DRY=1 ;;
-    *) sed -n '2,32p' "$0"; exit 0 ;;
+    *) sed -n '2,14p' "$0"; exit 0 ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -58,7 +40,7 @@ NS=${#SEEDS[@]}
 [ "$TEST" = 1 ] && { SEEDS=("${SEEDS[0]}"); NS=1; NJ=1; }
 [ "$NJ" -le 0 ] || [ "$NJ" -gt "$NS" ] && NJ=$NS
 
-# ---- share the seeds out over NJ tasks (round robin) ---------------------
+# ---- share the seeds over NJ tasks (round robin) -------------------------
 mkdir -p logs
 STAMP=$(date +%Y%m%d_%H%M%S)
 TASKS="$ROOT/logs/tasks_$STAMP.txt"           # line i = seed folders of array task i

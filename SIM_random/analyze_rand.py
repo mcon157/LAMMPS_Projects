@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
-"""
-analyze_rand.py - yields from the random-orientation SIM runs.
+"""analyze_rand.py - yields from the random-orientation SIM runs.
 
-Reads every rand_<MAT>_<tag><s>_<E>eV.dat written by in_rand_<MAT>.step2 and
-the surface log rand_<MAT>_surfaces.dat from step 1, then reports
-
-  per surface : impacts, sputtered W (and C), yields, He reflection, fraction
-                of impacts whose He reached the fixed shell
-  per set     : mean yield over surfaces +- standard error of the mean,
-                exactly as Jussila et al. 2018 (sigma = SD_pop / sqrt(N)),
-                plus the 'clean' mean using only impacts whose He never reached
-                the fixed shell (Jussila's worst-case lower bound)
-
+Reads rand_<MAT>_<tag><s>_<E>eV.dat (step 2) and rand_<MAT>_surfaces.dat (step 1):
+  per surface  impacts, sputtered W (and C), yields, He reflection, fraction of
+               impacts whose He reached the fixed shell
+  per set      mean yield over surfaces +- SEM as in Jussila et al. 2018
+               (SD_pop / sqrt(N)), plus the 'clean' mean without fixed-shell hits
 Sputtered = cap + end + lost (see the deck header).
 
-Outputs (in --out):
-  rand_<MAT>_<E>eV_per_surface.csv
-  rand_<MAT>_summary.csv        one row per (set, energy); set = random / each low-index tag
-  rand_<MAT>_<E>eV_ipf.png      yield of each random surface on the IPF (WC: C yield)
+Outputs (--out): rand_<MAT>_<E>eV_per_surface.csv, rand_<MAT>_summary.csv (one row
+per set and energy), rand_<MAT>_<E>eV_ipf.png (yield on the inverse pole figure).
 
-Usage:
-  python analyze_rand.py --mat W  --dir runs_W
-  python analyze_rand.py --mat WC --dir runs_WC
+    python analyze_rand.py --mat W  --dir runs_W
+    python analyze_rand.py --mat WC --dir runs_WC
 """
 import argparse
 import glob

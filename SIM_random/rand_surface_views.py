@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
-"""
-rand_surface_views.py - regular vs random surface, side by side.
+"""rand_surface_views.py - regular vs random surface, side by side.
 
-For W (reference = (001)) and WC (reference = basal (0001)) this draws
-  (a) the UNROTATED crystal block with its regular top face and the plane that
-      random surface s cuts through it (the picture in the sketch),
-  (b) top view of the regular surface,
-  (c) top view of random surface s,
-with the same scale, the impact square of the decks and the same colouring:
-species colour, lighter = deeper below the top atom z_s.
+For W (reference (001)) and WC (reference basal (0001)):
+  (a) the unrotated crystal with its regular top face and the plane random
+      surface s cuts through it, (b) top view of the regular surface,
+  (c) top view of random surface s;
+same scale, the decks' impact square, colour = species, lighter = deeper.
+Atoms are placed as in_rand_<MAT>.step1 places them (unrelaxed).
 
-Atoms are placed exactly as in_rand_<MAT>.step1 places them (unrelaxed).
+Outputs (--out): rand_regular_vs_random_W.png, _WC.png (1 x 3),
+rand_regular_vs_random.png and _slide.png (2 x 3).
 
-Outputs (in --out):
-  rand_regular_vs_random_W.png, rand_regular_vs_random_WC.png  (1 x 3 each)
-  rand_regular_vs_random.png                                    (2 x 3, for the slide)
-
-  rand_regular_vs_random_slide.png                              (2 x 3, larger text, no footnote)
-
-Usage:  python rand_surface_views.py [--s 7] [--out figs]
+    python rand_surface_views.py [--s 7] [--out figs]
 """
 import argparse
 import math

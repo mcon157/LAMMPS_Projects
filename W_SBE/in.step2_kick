@@ -1,3 +1,7 @@
+# W(001) slab at 0 K: kick the central surface atom upward with Epush and
+# record whether it escapes (append to kickout_0K_trials.dat).  Scan Epush
+# to find the kickout threshold: edit Epush below (equal-style, so not
+# -var), then:  lmp -in in.step2_kick
 
 clear
 units           metal
@@ -28,9 +32,7 @@ variable        dt equal 0.001
 variable        run_steps equal 8000
 variable        thermo_every equal 100
 
-# Escape criterion:
-# atom should be much farther than potential cutoff above original surface.
-# w_eam4 cutoff is around 5.5 A, so +20 A is conservative.
+# Escape: well beyond the EAM cutoff (~5.5 A) above the original surface.
 variable        escape_height equal 20.0
 
 # -----------------------------
@@ -76,12 +78,7 @@ group           g_surface region r_surface
 
 group           g_mobile subtract all g_fixed
 
-# -----------------------------
-# Select center surface atom
-# -----------------------------
-# For a 21x21x21 bcc slab this should usually select one atom.
-# If nkick != 1, adjust select_radius slightly.
-# -----------------------------
+# ---- central surface atom (one for a 21x21x21 slab; else adjust select_radius)
 
 variable        xmid equal 0.5*(xlo+xhi)
 variable        ymid equal 0.5*(ylo+yhi)
