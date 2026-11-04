@@ -1,5 +1,11 @@
 # LAMMPS workflows: He on W and WC
 
+# Additions (since Nov. 2nd)
+- CIM w/ Incident He and C Self-Sputtering
+- CIM clustering tracking: He sites and He/V
+- Building LAMMPS with GPU (KOKKOS) and SNAP
+-  
+
 LAMMPS input decks, Slurm job scripts and Python analysis for:
 - **He sputtering and surface erosion** of tungsten (W) and tungsten carbide (WC), with:
   - a continuous-impact model (CIM, one He per cycle into an evolving slab);
