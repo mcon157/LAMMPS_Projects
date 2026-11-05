@@ -4,7 +4,8 @@
 - CIM w/ Incident He and C Self-Sputtering
 - CIM clustering tracking: He sites and He/V
 - Building LAMMPS with GPU (KOKKOS) and SNAP
--  
+- SIM suite (option for surface, ES, energy, etc.)
+- CIM suite 
 
 LAMMPS input decks, Slurm job scripts and Python analysis for:
 - **He sputtering and surface erosion** of tungsten (W) and tungsten carbide (WC), with:
